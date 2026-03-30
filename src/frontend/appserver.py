@@ -15,14 +15,26 @@ import json
 import os
 import argparse
 import datetime
+import time
 import numpy as np
 from urllib.parse import parse_qs
 from urllib.parse import quote
 import re
+import threading
 
 
 app = Bottle()
 script_dir = os.path.dirname(os.path.abspath(__file__))
+
+@app.hook('after_request')
+def enable_cors():
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+
+@app.route('/api/<path:path>', method='OPTIONS')
+def cors_preflight(path):
+    return ''
 
 BUNDLE_TEMP_DIR = ''
 
@@ -564,6 +576,166 @@ def save_deal():
         print("Invalid data received")
         raise HTTPError(400, "Invalid data received")
     
+# === Multiplayer Room Management ===
+
+_rooms = {}  # room_id -> room dict
+_rooms_lock = threading.Lock()
+
+def _clean_stale_rooms():
+    """Remove rooms older than 2 hours"""
+    now = time.time()
+    with _rooms_lock:
+        stale = [rid for rid, r in _rooms.items() if now - r['created'] > 7200]
+        for rid in stale:
+            del _rooms[rid]
+
+@app.route('/api/rooms', method='GET')
+def list_rooms():
+    _clean_stale_rooms()
+    response.content_type = 'application/json'
+    with _rooms_lock:
+        visible = [r for r in _rooms.values() if r['state'] in ('waiting', 'starting')]
+    return json.dumps({'rooms': visible})
+
+@app.route('/api/rooms', method='POST')
+def create_room():
+    data = request.json
+    if not data or not data.get('name'):
+        raise HTTPError(400, "Room name required")
+    room_id = uuid.uuid4().hex[:4].upper()
+    host_name = data.get('host', 'Host')
+    host_seat = data.get('seat', 'S')
+    server = data.get('server', '3')
+    mode = data.get('mode', 'casual')
+    num_rounds = int(data.get('num_rounds', 0))
+    table = int(data.get('table', 1))
+    if mode not in ('casual', 'dual', 'match2v2', 'match4v4'):
+        raise HTTPError(400, "Invalid mode")
+    if mode == 'match2v2' and host_seat in ('E', 'W'):
+        raise HTTPError(400, "Host must sit N or S in 2v2 mode")
+    room = {
+        'id': room_id,
+        'name': data['name'],
+        'mode': mode,
+        'num_rounds': num_rounds,
+        'seats': {'N': None, 'E': None, 'S': None, 'W': None},
+        'table2_seats': {'N': None, 'E': None, 'S': None, 'W': None},
+        'server': server,
+        'state': 'waiting',
+        'host': host_name,
+        'host_seat': host_seat,
+        'created': time.time()
+    }
+    if table == 2:
+        room['table2_seats'][host_seat] = host_name
+    else:
+        room['seats'][host_seat] = host_name
+    with _rooms_lock:
+        _rooms[room_id] = room
+    response.content_type = 'application/json'
+    return json.dumps(room)
+
+@app.route('/api/rooms/<room_id>', method='GET')
+def get_room(room_id):
+    room_id = room_id.upper()
+    with _rooms_lock:
+        room = _rooms.get(room_id)
+    if not room:
+        raise HTTPError(404, "Room not found")
+    response.content_type = 'application/json'
+    return json.dumps(room)
+
+@app.route('/api/rooms/<room_id>/join', method='POST')
+def join_room(room_id):
+    room_id = room_id.upper()
+    data = request.json
+    if not data or not data.get('name') or not data.get('seat'):
+        raise HTTPError(400, "Name and seat required")
+    seat = data['seat']
+    name = data['name']
+    table = int(data.get('table', 1))
+    if seat not in ('N', 'E', 'S', 'W'):
+        raise HTTPError(400, "Invalid seat")
+    with _rooms_lock:
+        room = _rooms.get(room_id)
+        if not room:
+            raise HTTPError(404, "Room not found")
+        if room['state'] != 'waiting':
+            raise HTTPError(409, "Room is not accepting players")
+        seats_key = 'table2_seats' if table == 2 else 'seats'
+        # In match2v2, E and W are AI-only
+        if room.get('mode') == 'match2v2' and seat in ('E', 'W'):
+            raise HTTPError(400, "E/W seats are AI in 2v2 mode")
+        if room[seats_key][seat] is not None and room[seats_key][seat] != name:
+            raise HTTPError(409, "Seat is taken")
+        # Clear player's old seat (if switching seats)
+        for tkey in ('seats', 'table2_seats'):
+            for s, occupant in room[tkey].items():
+                if occupant == name:
+                    room[tkey][s] = None
+        room[seats_key][seat] = name
+    response.content_type = 'application/json'
+    return json.dumps(room)
+
+@app.route('/api/rooms/<room_id>/leave', method='POST')
+def leave_room(room_id):
+    room_id = room_id.upper()
+    data = request.json
+    seat = data.get('seat') if data else None
+    table = int(data.get('table', 1)) if data else 1
+    with _rooms_lock:
+        room = _rooms.get(room_id)
+        if not room:
+            raise HTTPError(404, "Room not found")
+        seats_key = 'table2_seats' if table == 2 else 'seats'
+        if seat and room[seats_key].get(seat):
+            room[seats_key][seat] = None
+            # If no players left in either table, remove room
+            if not any(room['seats'].values()) and not any(room['table2_seats'].values()):
+                del _rooms[room_id]
+                response.content_type = 'application/json'
+                return json.dumps({'deleted': True})
+    response.content_type = 'application/json'
+    return json.dumps(room)
+
+@app.route('/api/rooms/<room_id>/start', method='POST')
+def start_room(room_id):
+    room_id = room_id.upper()
+    with _rooms_lock:
+        room = _rooms.get(room_id)
+        if not room:
+            raise HTTPError(404, "Room not found")
+        if room['state'] != 'waiting':
+            raise HTTPError(409, "Room already started")
+        mode = room.get('mode', 'casual')
+        t1_count = sum(1 for v in room['seats'].values() if v is not None)
+        t2_count = sum(1 for v in room['table2_seats'].values() if v is not None)
+        if mode == 'casual' or mode == 'dual':
+            if t1_count < 1:
+                raise HTTPError(400, "Need at least 1 player")
+        elif mode == 'match2v2':
+            # Each table needs exactly 2 players (N+S)
+            if t1_count < 2 or t2_count < 2:
+                raise HTTPError(400, "Need 2 players per table for 2v2")
+        elif mode == 'match4v4':
+            if t1_count < 4 or t2_count < 4:
+                raise HTTPError(400, "Need 4 players per table for 4v4")
+        # Generate board seed for the session
+        room['board_seed'] = int(np.random.randint(1, 2000000000))
+        room['state'] = 'starting'
+    response.content_type = 'application/json'
+    return json.dumps(room)
+
+@app.route('/api/rooms/<room_id>/close', method='POST')
+def close_room(room_id):
+    room_id = room_id.upper()
+    with _rooms_lock:
+        if room_id in _rooms:
+            del _rooms[room_id]
+    response.content_type = 'application/json'
+    return json.dumps({'ok': True})
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Appserver")
     if "frontend" in script_dir:

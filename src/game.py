@@ -49,6 +49,7 @@ import conf
 
 from sample import Sample
 from bidding import bidding
+import deck52
 from deck52 import board_dealer_vuln, decode_card, card52to32, get_trick_winner_i, random_deal
 from bidding.binary import DealData
 from objects import CardResp, Card, BidResp
@@ -130,6 +131,7 @@ class Driver:
         self.ew = models.ew
         self.verbose = verbose
         self.play_only = False
+        self.auto_bid = False
         self.claim = models.claim
         self.claimed = None
         self.claimedbydeclarer = None
@@ -142,6 +144,28 @@ class Driver:
         self.card_play = None
         self.dds = ddsolver
 
+
+    async def _get_human_card(self, seat_idx=None):
+        """Get card input from human player via WebSocket or console."""
+        if seat_idx is not None and hasattr(self.factory, 'set_active_seat'):
+            self.factory.set_active_seat(seat_idx)
+        if hasattr(self.factory, 'socket'):
+            while True:
+                try:
+                    await self.factory.socket.send(json.dumps({
+                        'message': 'get_card_input'
+                    }))
+                    human_card = await self.factory.socket.recv()
+                    if human_card.startswith("Cl") or human_card.startswith("Co"):
+                        return human_card
+                    return deck52.encode_card(human_card)
+                except Exception as ex:
+                    print(f"Exception receiving card: {ex}")
+                    if "going away" in str(ex):
+                        raise ex
+        else:
+            card = input('your play: ').strip().upper()
+            return deck52.encode_card(card)
 
     def set_deal(self, board_number, deal_str, auction_str, play_only = None, bidding_only="False"):
         self.play_only = play_only
@@ -179,6 +203,7 @@ class Driver:
         self.trick_winners = []
         self.tricks_taken = 0
         self.parscore = 0
+        self.dd_trajectory = []
 
         # Now you can use hash_integer as a seed
         hash_integer = calculate_seed(deal_str)
@@ -221,7 +246,75 @@ class Driver:
         self.decl_i = bidding.get_decl_i(self.contract)
 
         if self.bidding_only != "False":
-            print("Bidding only,  saving result and going to next board")
+            print(f"Bidding only ({self.bidding_only}), sending result to client")
+
+            # DD analysis: how many tricks can declarer make?
+            if self.contract is not None and self.strain_i is not None and self.decl_i is not None:
+                try:
+                    leader_i = (self.decl_i + 1) % 4
+                    pbn = 'N:' + self.deal_str
+                    dd_res = self.dds.solve(self.strain_i, leader_i, [], [pbn], 1)
+                    dd_max = dd_res["max"][0]
+                    # dd_max = tricks for leader's side; declarer tricks = 13 - dd_max
+                    self.dd_tricks = 13 - dd_max
+                    level = int(self.contract[0])
+                    self.dd_makes = self.dd_tricks >= level + 6
+                    print(f"DD: declarer can take {self.dd_tricks} tricks, contract {'makes' if self.dd_makes else 'fails'}")
+                except Exception as ex:
+                    print(f"DD analysis error: {ex}")
+                    self.dd_tricks = None
+                    self.dd_makes = None
+
+            # Par contract calculation
+            try:
+                par_result = self.dds.calculatepar(self.deal_str, [self.vuln_ns, self.vuln_ew], print_result=False)
+                if par_result:
+                    self.par_score = par_result['score']
+                    self.dd_table = par_result.get('dd_table')
+                    try:
+                        self.par_display = format_par_display(
+                            par_result['ns_contracts'],
+                            par_result['ew_contracts'],
+                            par_result['score']
+                        )
+                        print(f"Par: {self.par_display}")
+                    except Exception as ex:
+                        print(f"Par display format error: {ex}, ns='{par_result['ns_contracts']}', ew='{par_result['ew_contracts']}'")
+                        score = par_result['score']
+                        self.par_display = f"NS {'+' if score >= 0 else ''}{score}" if score != 0 else "Pass Out"
+            except Exception as ex:
+                print(f"Par calculation error: {ex}")
+                traceback.print_exc()
+                self.par_score = None
+                self.par_display = None
+                self.dd_table = None
+
+            # Send review immediately (DD + par ready), AI contract will follow
+            await self.channel.send(json.dumps({
+                'message': 'deal_end',
+                'pbn': self.deal_str,
+                'dict': self.to_dict()
+            }))
+
+            # Run full AI auction for comparison (async, sends update when done)
+            try:
+                saved_human = self.human[:]
+                saved_bid_responses = self.bid_responses[:]
+                self.human = [False, False, False, False]
+                self.bid_responses = []
+                ai_auction = await self.bidding("False", None, silent=True)
+                self.human = saved_human
+                self.bid_responses = saved_bid_responses
+                self.ai_contract = bidding.get_contract(ai_auction)
+                print(f"AI contract: {self.ai_contract}, Human contract: {self.contract}")
+                await self.channel.send(json.dumps({
+                    'message': 'ai_contract_update',
+                    'ai_contract': self.ai_contract
+                }))
+            except Exception as ex:
+                print(f"AI auction error: {ex}")
+                self.ai_contract = None
+
             return
 
         if self.contract is None:
@@ -232,6 +325,10 @@ class Driver:
             }))
             print('{1} Bidding took {0:0.1f} seconds.'.format(time.time() - t_start, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
             return
+
+        # auto_bid mode: AI bid all seats, now switch South to human for play
+        if self.auto_bid:
+            self.human[2] = True
 
         await self.channel.send(json.dumps({
             'message': 'auction_end',
@@ -308,6 +405,33 @@ class Driver:
 
         
         self.card_play = await self.play(self.contract, self.strain_i, self.decl_i, self.auction, opening_lead52, features)
+
+        # Compute DD table and par for post-play review
+        try:
+            par_result = self.dds.calculatepar(self.deal_str, [self.vuln_ns, self.vuln_ew], print_result=False)
+            if par_result:
+                self.par_score = par_result['score']
+                self.dd_table = par_result.get('dd_table')
+                # Derive dd_tricks from dd_table for the actual contract
+                if self.dd_table and self.strain_i is not None and self.decl_i is not None:
+                    strain_idx = (self.strain_i - 1) % 5
+                    self.dd_tricks = self.dd_table[strain_idx][self.decl_i]
+                    level = int(self.contract[0])
+                    self.dd_makes = self.dd_tricks >= level + 6
+                try:
+                    self.par_display = format_par_display(
+                        par_result['ns_contracts'],
+                        par_result['ew_contracts'],
+                        par_result['score']
+                    )
+                except Exception as ex:
+                    score = par_result['score']
+                    self.par_display = f"NS {'+' if score >= 0 else ''}{score}" if score != 0 else "Pass Out"
+        except Exception as ex:
+            print(f"Par calculation error: {ex}")
+            self.par_score = None
+            self.par_display = None
+            self.dd_table = None
 
         await self.channel.send(json.dumps({
             'message': 'deal_end',
@@ -451,12 +575,15 @@ class Driver:
         return pbn_str
     
     def to_dict(self):
+        # Build auction string for replay: strip PAD_START, keep real bids
+        auction_bids = [b for b in self.auction if b != 'PAD_START'] if self.auction else []
         result = {
             'timestamp': time.time(),
             'dealer': self.dealer_i,
             'vuln_ns': self.vuln_ns,
             'vuln_ew': self.vuln_ew,
             'hands': self.deal_str,
+            'auction': auction_bids,
             'bids': [b.to_dict() for b in self.bid_responses],
             'contract': self.contract,
             'play': [c.to_dict() for c in self.card_responses],
@@ -482,6 +609,18 @@ class Driver:
             result['claimedbydeclarer'] = self.claimedbydeclarer
         if self.conceed is not None:
             result['conceed'] = self.conceed
+        if self.dd_trajectory:
+            result['dd_trajectory'] = self.dd_trajectory
+        if hasattr(self, 'dd_tricks') and self.dd_tricks is not None:
+            result['dd_tricks'] = self.dd_tricks
+            result['dd_makes'] = self.dd_makes
+        if hasattr(self, 'ai_contract') and self.ai_contract is not None:
+            result['ai_contract'] = self.ai_contract
+        if hasattr(self, 'par_score') and self.par_score is not None:
+            result['par_score'] = self.par_score
+            result['par_display'] = self.par_display
+        if hasattr(self, 'dd_table') and self.dd_table is not None:
+            result['dd_table'] = self.dd_table
         return result
 
 # trick_i : 
@@ -593,21 +732,17 @@ class Driver:
             AsyncCardPlayer(self.models, 3, decl_hand, dummy_hand, contract, is_decl_vuln, self.sampler, pimc[3], self.dds, self.verbose)
         ]
 
-        # check if user is playing and update card players accordingly
-        # the card players are allways positioned relative to declarer (lefty = 0, dummy = 1 ...)
-        for i in range(4): 
+        # Track which relative positions need human input (keep bot card players for analysis)
+        human_card_positions = set()
+        for i in range(4):
             if self.human[i]:
-                # We are declarer or human declare and dummy
                 if decl_i == i or self.human_declare and decl_i == (i + 2) % 4:
-                    card_players[3] = self.factory.create_human_cardplayer(self.models, 3, decl_hand, dummy_hand, contract, is_decl_vuln)
-                    card_players[1] = self.factory.create_human_cardplayer(self.models, 1, dummy_hand, decl_hand, contract, is_decl_vuln)
-                    
-                # We are lefty
+                    human_card_positions.add(3)  # declarer
+                    human_card_positions.add(1)  # dummy
                 if i == (decl_i + 1) % 4:
-                    card_players[0] = self.factory.create_human_cardplayer(self.models, 0, lefty_hand, dummy_hand, contract, is_decl_vuln)
-                # We are righty
+                    human_card_positions.add(0)  # lefty
                 if i == (decl_i + 3) % 4:
-                    card_players[2] = self.factory.create_human_cardplayer(self.models, 2, righty_hand, dummy_hand, contract, is_decl_vuln)
+                    human_card_positions.add(2)  # righty
 
         claimer = Claimer(self.verbose, self.dds)
 
@@ -625,6 +760,18 @@ class Driver:
         tricks = []
         tricks52 = []
         trick_won_by = []
+
+        # Compute initial DD trajectory point (before opening lead)
+        try:
+            init_pbn = 'N:' + ' '.join([
+                deck52.deal_to_str(card_players[rel].hand52) for rel in range(4)
+            ])
+            dd_init = self.dds.solve(strain_i, 0, [], [init_pbn], 1)
+            # Leader 0 = lefty (defense), so max tricks are for defense
+            self.dd_trajectory = [13 - dd_init["max"][0]]
+        except Exception as ex:
+            print(f"DD trajectory init error: {ex}")
+            self.dd_trajectory = []
 
         opening_lead = card52to32(opening_lead52)
 
@@ -653,7 +800,8 @@ class Driver:
                 if self.verbose:
                     print('play status', play_status)
 
-                if isinstance(card_players[player_i], botcardplayer.CardPlayer):
+                # Forced/follow optimization (skip for human positions - they need UI prompt)
+                if player_i not in human_card_positions:
                     if play_status == "Forced" and self.models.autoplaysingleton:
                         card = get_singleton(card_players[player_i].hand52,current_trick52)
                         card_resp = CardResp(
@@ -661,14 +809,11 @@ class Driver:
                             candidates=[],
                             samples=[],
                             shape=-1,
-                            hcp=-1, 
+                            hcp=-1,
                             quality=None,
-                            who="Forced", 
+                            who="Forced",
                             claim = -1
                         )
-                # if play status = follow 
-                # and all out cards are equal value (like JT9)
-                # the play lowest if defending and highest if declaring
                     if play_status == "Follow" and card_resp == None:
                         result = get_possible_cards(card_players[player_i].hand52,current_trick52)
                         if result[0] != -1:
@@ -680,36 +825,32 @@ class Driver:
                                 shape=-1,
                                 hcp=-1,
                                 quality=None,
-                                who="Follow", 
+                                who="Follow",
                                 claim = -1
-                            )                        
+                            )
 
-                # if card_resp is None, we have to rollout
-                if card_resp == None:    
-                    if isinstance(card_players[player_i], botcardplayer.CardPlayer):
-                        played_cards = [card for row in player_cards_played52 for card in row] + current_trick52
-                        rollout_states, bidding_scores, c_hcp, c_shp, quality, probability_of_occurence, lead_scores, play_scores, logical_play_scores, discard_scores, worlds = self.sampler.init_rollout_states(trick_i, player_i, card_players, played_cards, player_cards_played, shown_out_suits, discards, features["aceking"], current_trick, opening_lead52, auction, card_players[player_i].hand_str, card_players[player_i].public_hand_str, [self.vuln_ns, self.vuln_ew], self.models, card_players[player_i].get_random_generator())
-                        assert rollout_states[0].shape[0] > 0, "No samples for DDSolver"
-                        card_players[player_i].check_pimc_constraints(trick_i, rollout_states, quality)
-                    else: 
-                        rollout_states = []
-                        bidding_scores = []
-                        lead_scores = []
-                        play_scores = []
-                        c_hcp = -1
-                        c_shp = -1
-                        quality = 1
-                        probability_of_occurence = []
-                        logical_play_scores = []
-                        discard_scores = []
-                        worlds = []
-                        
+                # if card_resp is None, we have to rollout and evaluate
+                if card_resp == None:
+                    # Always run full bot analysis (for both bot and human positions)
+                    played_cards = [card for row in player_cards_played52 for card in row] + current_trick52
+                    rollout_states, bidding_scores, c_hcp, c_shp, quality, probability_of_occurence, lead_scores, play_scores, logical_play_scores, discard_scores, worlds = self.sampler.init_rollout_states(trick_i, player_i, card_players, played_cards, player_cards_played, shown_out_suits, discards, features["aceking"], current_trick, opening_lead52, auction, card_players[player_i].hand_str, card_players[player_i].public_hand_str, [self.vuln_ns, self.vuln_ew], self.models, card_players[player_i].get_random_generator())
+                    assert rollout_states[0].shape[0] > 0, "No samples for DDSolver"
+                    card_players[player_i].check_pimc_constraints(trick_i, rollout_states, quality)
+
                     await asyncio.sleep(0.01)
 
-                    while card_resp is None:
-                        card_resp =  await card_players[player_i].async_play_card(trick_i, leader_i, current_trick52, tricks52, rollout_states, worlds, bidding_scores, quality, probability_of_occurence, shown_out_suits, play_status, lead_scores, play_scores, logical_play_scores, discard_scores, features)
+                    # Run bot evaluation to get candidates
+                    bot_card_resp = card_players[player_i].play_card(trick_i, leader_i, current_trick52, tricks52, rollout_states, worlds, bidding_scores, quality, probability_of_occurence, shown_out_suits, play_status, lead_scores, play_scores, logical_play_scores, discard_scores, features, include_all_cards=(player_i in human_card_positions))
 
-                        if (str(card_resp.card).startswith("Conceed")) :
+                    if player_i in human_card_positions:
+                        # Human position: get human's card, keep bot's analysis
+                        # Convert relative player_i to absolute seat for multiplayer routing
+                        abs_seat = [(decl_i + 1) % 4, (decl_i + 2) % 4, (decl_i + 3) % 4, decl_i][player_i]
+                        card_resp = None
+                        while card_resp is None:
+                            human_input = await self._get_human_card(seat_idx=abs_seat)
+
+                            if str(human_input).startswith("Co"):
                                 self.claimedbydeclarer = (player_i == 3) or (player_i == 1)
                                 self.claimed = 0
                                 self.conceed = True
@@ -717,39 +858,48 @@ class Driver:
                                 print(f"Contract: {self.contract} Accepted conceed½")
                                 return
 
-                        if (str(card_resp.card).startswith("Claim")) :
-                            tricks_claimed = int(re.search(r'\d+', card_resp.card).group()) if re.search(r'\d+', card_resp.card) else None
-                            
-                            self.canclaim = claimer.claim(
-                                strain_i=strain_i,
-                                player_i=player_i,
-                                hands52=[card_player.hand52 for card_player in card_players],
-                                n_samples=50
+                            if str(human_input).startswith("Cl"):
+                                tricks_claimed = int(re.search(r'\d+', str(human_input)).group()) if re.search(r'\d+', str(human_input)) else None
+                                self.canclaim = claimer.claim(
+                                    strain_i=strain_i,
+                                    player_i=player_i,
+                                    hands52=[card_player.hand52 for card_player in card_players],
+                                    n_samples=50
+                                )
+                                if tricks_claimed <= self.canclaim:
+                                    print(f"Claimed {tricks_claimed} can claim {self.canclaim} {player_i} {decl_i}")
+                                    self.claimedbydeclarer = (player_i == 3) or (player_i == 1)
+                                    self.claimed = tricks_claimed
+                                    self.trick_winners = trick_won_by
+                                    if self.claimedbydeclarer:
+                                        print(f"Contract: {self.contract} Accepted declarers claim of {tricks_claimed} tricks")
+                                    else:
+                                        print(f"Contract: {self.contract} Accepted opponents claim of {tricks_claimed} tricks")
+                                    return
+                                else:
+                                    if self.claimedbydeclarer:
+                                        print(f"Declarer claimed {tricks_claimed} tricks - rejected {self.canclaim}")
+                                    else:
+                                        print(f"Opponents claimed {tricks_claimed} tricks - rejected {self.canclaim}")
+                                    await self.channel.send(json.dumps({
+                                        'message': 'claim_rejected',
+                                    }))
+                                    continue
+
+                            # Human's card with bot's analysis
+                            card_resp = CardResp(
+                                card=Card.from_code(human_input),
+                                candidates=bot_card_resp.candidates,
+                                samples=bot_card_resp.samples,
+                                shape=c_shp,
+                                hcp=c_hcp,
+                                quality=bot_card_resp.quality,
+                                who="Human",
+                                claim=-1
                             )
-                            if (tricks_claimed <= self.canclaim):
-                                # player_i is relative to declarer
-                                print(f"Claimed {tricks_claimed} can claim {self.canclaim} {player_i} {decl_i}")
-                                self.claimedbydeclarer = (player_i == 3) or (player_i == 1)
-                                self.claimed = tricks_claimed
-
-                                # Trick winners until claim is saved
-                                self.trick_winners = trick_won_by
-                                # Print contract and result
-                                if self.claimedbydeclarer:
-                                    print(f"Contract: {self.contract} Accepted declarers claim of {tricks_claimed} tricks")
-                                else:
-                                    print(f"Contract: {self.contract} Accepted opponents claim of {tricks_claimed} tricks")
-                                return
-                            else:
-                                if self.claimedbydeclarer:
-                                    print(f"Declarer claimed {tricks_claimed} tricks - rejected {self.canclaim}")
-                                else:
-                                    print(f"Opponents claimed {tricks_claimed} tricks - rejected {self.canclaim}")
-                                await self.channel.send(json.dumps({
-                                    'message': 'claim_rejected',
-                                }))
-                                card_resp = None
-
+                    else:
+                        # Bot position: use bot's card and analysis
+                        card_resp = bot_card_resp
 
                     card_resp.hcp = c_hcp
                     card_resp.shape = c_shp
@@ -757,7 +907,7 @@ class Driver:
                         print(f"{Fore.LIGHTCYAN_EX}")
                         pprint.pprint(card_resp.to_dict(), width=200)
                         print(f"{Fore.RESET}")
-                    
+
                     await asyncio.sleep(0.01)
 
                 self.card_responses.append(card_resp)
@@ -876,6 +1026,24 @@ class Driver:
             current_trick = []
             current_trick52 = []
 
+            # DD trajectory: compute true DD on remaining hands after this trick
+            if len(self.dd_trajectory) > 0:
+                try:
+                    tricks_remaining = 12 - trick_i
+                    pbn = 'N:' + ' '.join([
+                        deck52.deal_to_str(card_players[rel].hand52) for rel in range(4)
+                    ])
+                    dd_res = self.dds.solve(strain_i, leader_i, [], [pbn], 1)
+                    dd_max = dd_res["max"][0]
+                    decl_taken = card_players[3].n_tricks_taken
+                    # leader_i: odd (1,3) = declaring side, even (0,2) = defense
+                    if leader_i % 2 == 1:
+                        self.dd_trajectory.append(decl_taken + dd_max)
+                    else:
+                        self.dd_trajectory.append(decl_taken + tricks_remaining - dd_max)
+                except Exception as ex:
+                    print(f"DD trajectory error trick {trick_i+1}: {ex}")
+
             if self.verbose:
                 print(f"Human {self.human}")
             if np.any(np.array(self.human)):
@@ -890,8 +1058,9 @@ class Driver:
         print("trick 13")
         for player_i in map(lambda x: x % 4, range(leader_i, leader_i + 4)):
             
-            if not isinstance(card_players[player_i], botcardplayer.CardPlayer):
-                await card_players[player_i].get_card_input()
+            if player_i in human_card_positions:
+                abs_seat = [(decl_i + 1) % 4, (decl_i + 2) % 4, (decl_i + 3) % 4, decl_i][player_i]
+                await self._get_human_card(seat_idx=abs_seat)
                 who = "Human"
             else:
                 who = "NN"
@@ -939,6 +1108,10 @@ class Driver:
         self.trick_winners = trick_won_by
         self.tricks_taken = card_players[3].n_tricks_taken
 
+        # Final DD trajectory entry: actual result
+        if len(self.dd_trajectory) > 0:
+            self.dd_trajectory.append(card_players[3].n_tricks_taken)
+
         # Print contract and result
         print("Contract: ",self.contract, card_players[3].n_tricks_taken, "tricks")
 
@@ -954,28 +1127,45 @@ class Driver:
 
         await asyncio.sleep(0.01)
 
+        # Always run bot analysis for opening lead
+        bot_lead = AsyncBotLead(
+            [self.vuln_ns, self.vuln_ew],
+            hands_str[(decl_i + 1) % 4],
+            self.models,
+            self.sampler,
+            (decl_i + 1) % 4,
+            self.dealer_i,
+            self.dds,
+            self.verbose
+        )
+        bot_card_resp = await bot_lead.async_opening_lead(auction, aceking)
+
         if self.human[(decl_i + 1) % 4]:
-            card_resp = await self.factory.create_human_leader().async_lead()
+            leader_seat = (decl_i + 1) % 4
+            if hasattr(self.factory, 'set_active_seat'):
+                self.factory.set_active_seat(leader_seat)
+            human_card_resp = await self.factory.create_human_leader().async_lead()
             if self.verbose:
-                print(f"{Fore.LIGHTCYAN_EX}{card_resp.card} selected by human{Fore.RESET}")
-        else:
-            bot_lead = AsyncBotLead(
-                [self.vuln_ns, self.vuln_ew], 
-                hands_str[(decl_i + 1) % 4], 
-                self.models,
-                self.sampler,
-                (decl_i + 1) % 4,
-                self.dealer_i,
-                self.dds,
-                self.verbose
+                print(f"{Fore.LIGHTCYAN_EX}{human_card_resp.card} selected by human{Fore.RESET}")
+            # Use human's card choice but keep bot's analysis
+            card_resp = CardResp(
+                card=human_card_resp.card,
+                candidates=bot_card_resp.candidates,
+                samples=bot_card_resp.samples,
+                shape=bot_card_resp.shape,
+                hcp=bot_card_resp.hcp,
+                quality=bot_card_resp.quality,
+                who="Human",
+                claim=-1
             )
-            card_resp = await bot_lead.async_opening_lead(auction, aceking)
+        else:
+            card_resp = bot_card_resp
 
         await asyncio.sleep(0.01)
 
         return card_resp
 
-    async def bidding(self, bidding_only, bidding_only_auction):
+    async def bidding(self, bidding_only, bidding_only_auction, silent=False):
         hands_str = self.deal_str.split()
         
         vuln = [self.vuln_ns, self.vuln_ew]
@@ -985,7 +1175,7 @@ class Driver:
         for i, level in enumerate(self.human):
             if level == 1:
                 hint_bots[i] = AsyncBotBid(vuln, hands_str[i], self.models, self.sampler, i, self.dealer_i, self.dds, False, self.verbose)
-                players.append(self.factory.create_human_bidder(vuln, hands_str[i], self.name, hint_bots[i]))
+                players.append(self.factory.create_human_bidder(vuln, hands_str[i], self.name, hint_bots[i], player_i=i))
                 self.bot = None
             else:
                 self.bot = AsyncBotBid(vuln, hands_str[i], self.models, self.sampler, i, self.dealer_i, self.dds, False, self.verbose)
@@ -1015,28 +1205,46 @@ class Driver:
                     bid_resp = BidResp(bid="PASS", candidates=[], samples=[], shape=-1, hcp=-1, who=self.name, quality=None, alert=alert, explanation=None)
             else:
                 bid_resp = await players[player_i].async_bid(auction, alert)
-            if bid_resp.bid == "Alert": 
+            if bid_resp.bid == "Alert":
                 alert = not alert
-                await self.channel.send(json.dumps({
-                    'message': 'alert',
-                    'alert': str(alert)
-                }))
+                if not silent:
+                    await self.channel.send(json.dumps({
+                        'message': 'alert',
+                        'alert': str(alert)
+                    }))
                 await asyncio.sleep(0.1)
             else:
                 if bid_resp.bid == "Hint":
                     bid_resp = await hint_bots[player_i].async_bid(auction)
-                    await self.channel.send(json.dumps({
-                        'message': 'hint',
-                        'bids': bid_resp.to_dict()
-                    }))
+                    if not silent:
+                        await self.channel.send(json.dumps({
+                            'message': 'hint',
+                            'bids': bid_resp.to_dict()
+                        }))
 
                     await asyncio.sleep(0.1)
                 else :
                     self.bid_responses.append(bid_resp)
                     auction.append(bid_resp.bid)
+
+                    # For human bids: get AI's analysis for review comparison
+                    if not silent and self.human[player_i] and hint_bots[player_i] is not None:
+                        ai_resp = await hint_bots[player_i].async_bid(auction[:-1])
+                        self.bid_responses[-1] = BidResp(
+                            bid=bid_resp.bid,
+                            candidates=ai_resp.candidates,
+                            samples=ai_resp.samples,
+                            shape=ai_resp.shape,
+                            hcp=ai_resp.hcp,
+                            who="Human",
+                            quality=bid_resp.quality,
+                            alert=bid_resp.alert,
+                            explanation=bid_resp.explanation
+                        )
+
                     bid_no += 1
 
-                    if self.bidding_only != "NS":
+                    if self.bidding_only != "NS" and not silent:
                         await self.channel.send(json.dumps({
                             'message': 'bid_made',
                             'auction': auction,
@@ -1050,6 +1258,61 @@ class Driver:
                     alert = False
                 
         return auction
+
+def format_par_display(ns_str, ew_str, ns_score):
+    """Parse DDS par strings into a readable display.
+
+    DDS format: "NS:NS 4H" or "NS:EW 45Cx" or "NS:NS 45N"
+    - After ':' is '<side> <levels><strain>[x]'
+    - Multiple levels like '45N' means both 4NT and 5NT make
+    """
+    strain_names = {'C': 'C', 'D': 'D', 'H': 'H', 'S': 'S', 'N': 'NT'}
+
+    def parse_par_str(s):
+        # Remove perspective prefix "NS:" or "EW:"
+        if ':' in s:
+            s = s.split(':', 1)[1].strip()
+        if not s:
+            return None
+        parts = s.split()
+        if len(parts) < 2:
+            return None
+        side = parts[0]  # "NS" or "EW"
+        contract = parts[1]  # e.g. "4H", "45N", "4Hx"
+
+        # Check for doubled
+        doubled = ''
+        if contract.endswith('x'):
+            doubled = 'x'
+            contract = contract[:-1]
+
+        if len(contract) < 2:
+            return None
+
+        # Last char is strain
+        strain = contract[-1]
+        levels = contract[:-1]  # e.g. "4" or "45"
+
+        # Filter to digits only for level
+        digits = [c for c in levels if c.isdigit()]
+        if not digits:
+            return None
+
+        # Take the highest level
+        highest = max(digits)
+
+        strain_display = strain_names.get(strain, strain)
+        return f"{highest}{strain_display}{doubled} by {side}"
+
+    parsed = parse_par_str(ns_str)
+    if not parsed:
+        if ns_score == 0:
+            return "Pass Out"
+        return f"NS {'+' if ns_score >= 0 else ''}{ns_score}"
+
+    score_str = f"NS {'+' if ns_score >= 0 else ''}{ns_score}" if ns_score >= 0 else f"EW +{-ns_score}"
+    return f"{parsed} ({score_str})"
+
 
 def random_deal_source():
     while True:
@@ -1380,8 +1643,9 @@ async def main():
                     print(f"{Fore.LIGHTGREEN_EX}Running score: {driver.facit_total}{Style.RESET_ALL}")
         else:
             #print("Calculating PAR")
-            par_score = dds.calculatepar(driver.deal_str, [driver.vuln_ns, driver.vuln_ew])
-            if driver.contract != None:
+            par_result = dds.calculatepar(driver.deal_str, [driver.vuln_ns, driver.vuln_ew])
+            par_score = par_result['score'] if par_result else None
+            if driver.contract != None and par_score is not None:
                 if (driver.contract[-1] == "N" or driver.contract[-1] =="S"):
                     score = scoring.score(driver.contract, driver.vuln_ns, driver.tricks_taken)
                 if (driver.contract[-1] == "E" or driver.contract[-1] =="W"):

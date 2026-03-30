@@ -180,7 +180,9 @@ class ddTableDealPBN(Structure):
     _fields_ = [("cards", c_char * 80)]
 
 class ddTableResults(Structure):
-    _fields_ = [("resTable", c_int * DDS_STRAINS * DDS_HANDS)]
+    # C: int resTable[DDS_STRAINS][DDS_HANDS] = int[5][4]
+    # ctypes: (c_int * 4) * 5 to match C's row-major layout
+    _fields_ = [("resTable", c_int * DDS_HANDS * DDS_STRAINS)]
 
 class parResults(Structure):
     _fields_ = [("parScore", ((c_char * 16) * 2)),

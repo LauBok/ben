@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiplayer - BEN</title>
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="lobby.css">
+</head>
+<body>
+
+<div class="lobby-header">
+    <h1><span class="lobby-brand">BEN</span> — Multiplayer</h1>
+    <a href="menu.html" class="lobby-nav-link">Home</a>
+</div>
+
+<div class="lobby-container">
+
+    <!-- Step 1: Name + Create/Join -->
+    <div id="lobby-setup" class="lobby-card">
+        <div class="lobby-name-row">
+            <label for="lobby-player-name">Your Name</label>
+            <input type="text" id="lobby-player-name" placeholder="Enter your name" maxlength="20">
+        </div>
+
+        <div class="lobby-actions-row">
+            <div class="lobby-action-box">
+                <h3>Host a Game</h3>
+                <div class="lobby-form-row">
+                    <label>Mode</label>
+                    <select id="lobby-mode">
+                        <option value="casual" selected>Casual Play</option>
+                        <option value="dual">Dual Table (vs AI)</option>
+                        <option value="match2v2">Match 2v2</option>
+                        <option value="match4v4">Match 4v4</option>
+                    </select>
+                </div>
+                <div class="lobby-form-row" id="lobby-rounds-row" style="display:none">
+                    <label>Rounds</label>
+                    <select id="lobby-rounds">
+                        <option value="4">4 boards</option>
+                        <option value="8" selected>8 boards</option>
+                        <option value="16">16 boards</option>
+                    </select>
+                </div>
+                <div class="lobby-form-row">
+                    <label>Your Seat</label>
+                    <div class="lobby-seat-pick">
+                        <label><input type="radio" name="lobby-host-seat" value="N"> N</label>
+                        <label><input type="radio" name="lobby-host-seat" value="E"> E</label>
+                        <label><input type="radio" name="lobby-host-seat" value="S" checked> S</label>
+                        <label><input type="radio" name="lobby-host-seat" value="W"> W</label>
+                    </div>
+                </div>
+                <div class="lobby-form-row">
+                    <label for="lobby-create-server">Server</label>
+                    <select id="lobby-create-server">
+                        <option value="3" selected>Default (21GF)</option>
+                        <option value="0">BEN 2/1</option>
+                        <option value="1">BEN SAYC</option>
+                        <option value="2">GIB-BBO</option>
+                    </select>
+                </div>
+                <button id="lobby-create-btn" class="lobby-btn-primary">Create Game</button>
+            </div>
+
+            <div class="lobby-divider"><span>or</span></div>
+
+            <div class="lobby-action-box">
+                <h3>Join a Game</h3>
+                <div class="lobby-form-row">
+                    <label for="lobby-join-code">Game Code</label>
+                    <input type="text" id="lobby-join-code" placeholder="e.g. A3F7"
+                           maxlength="8" style="text-transform:uppercase; font-weight:700; letter-spacing:2px; text-align:center">
+                </div>
+                <button id="lobby-join-btn" class="lobby-btn-primary">Join Game</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 2: Room view (shown after create/join) -->
+    <div id="lobby-room" class="lobby-card" style="display:none">
+        <div class="lobby-room-header">
+            <div>
+                <h3>Game Room</h3>
+                <span id="lobby-mode-label" class="lobby-mode-badge"></span>
+            </div>
+            <div class="lobby-code-box">
+                <span class="lobby-code-label">Game Code</span>
+                <span id="lobby-code-display" class="lobby-code-value"></span>
+                <button id="lobby-copy-btn" class="lobby-btn-sm" title="Copy code">Copy</button>
+            </div>
+        </div>
+
+        <!-- Table 1 (always shown) -->
+        <div id="lobby-table1-section">
+            <div id="lobby-table1-label" class="lobby-table-label" style="display:none">Table 1</div>
+            <div class="lobby-table-display" id="lobby-table1">
+                <div class="lobby-seat lobby-seat-n" id="lobby-seat-N">
+                    <div class="lobby-seat-label">North</div>
+                    <div class="lobby-seat-player"></div>
+                </div>
+                <div class="lobby-seat lobby-seat-w" id="lobby-seat-W">
+                    <div class="lobby-seat-label">West</div>
+                    <div class="lobby-seat-player"></div>
+                </div>
+                <div class="lobby-table-center">
+                    <div class="lobby-table-felt"></div>
+                </div>
+                <div class="lobby-seat lobby-seat-e" id="lobby-seat-E">
+                    <div class="lobby-seat-label">East</div>
+                    <div class="lobby-seat-player"></div>
+                </div>
+                <div class="lobby-seat lobby-seat-s" id="lobby-seat-S">
+                    <div class="lobby-seat-label">South</div>
+                    <div class="lobby-seat-player"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Table 2 (only for match modes) -->
+        <div id="lobby-table2-section" style="display:none">
+            <div class="lobby-table-label">Table 2</div>
+            <div class="lobby-table-display" id="lobby-table2">
+                <div class="lobby-seat lobby-seat-n" id="lobby-seat2-N">
+                    <div class="lobby-seat-label">North</div>
+                    <div class="lobby-seat-player"></div>
+                </div>
+                <div class="lobby-seat lobby-seat-w" id="lobby-seat2-W">
+                    <div class="lobby-seat-label">West</div>
+                    <div class="lobby-seat-player"></div>
+                </div>
+                <div class="lobby-table-center">
+                    <div class="lobby-table-felt"></div>
+                </div>
+                <div class="lobby-seat lobby-seat-e" id="lobby-seat2-E">
+                    <div class="lobby-seat-label">East</div>
+                    <div class="lobby-seat-player"></div>
+                </div>
+                <div class="lobby-seat lobby-seat-s" id="lobby-seat2-S">
+                    <div class="lobby-seat-label">South</div>
+                    <div class="lobby-seat-player"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="lobby-status" class="lobby-status"></div>
+        <div class="lobby-room-actions">
+            <button id="lobby-start-btn" class="lobby-btn-primary" style="display:none">Start Game</button>
+            <button id="lobby-leave-btn" class="lobby-btn-secondary">Leave</button>
+        </div>
+    </div>
+
+</div>
+
+<script src="lobby.js"></script>
+</body>
+</html>

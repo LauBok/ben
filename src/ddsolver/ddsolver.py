@@ -68,16 +68,28 @@ class DDSolver:
 
         par = ctypes.pointer(pres)
 
+        ns_score_str = par.contents.parScore[0].value.decode('utf-8')
+        ew_score_str = par.contents.parScore[1].value.decode('utf-8')
+        ns_contracts = par.contents.parContractsString[0].value.decode('utf-8')
+        ew_contracts = par.contents.parContractsString[1].value.decode('utf-8')
+
         if print_result:
-            print("NS score: {}".format(par.contents.parScore[0].value.decode('utf-8')))
-            print("EW score: {}".format(par.contents.parScore[1].value.decode('utf-8')))
-            #print("NS list : {}".format(par.contents.parContractsString[0].value.decode('utf-8')))
-            #print("EW list : {}\n".format(par.contents.parContractsString[1].value.decode('utf-8')))
-        par = par.contents.parScore[0].value.decode('utf-8')
-        ns_score = par.split()[1]
-        return int(ns_score)
-    
-        
+            print("NS score: {}".format(ns_score_str))
+            print("EW score: {}".format(ew_score_str))
+            print("NS contracts: {}".format(ns_contracts))
+            print("EW contracts: {}".format(ew_contracts))
+
+        ns_score = int(ns_score_str.split()[1])
+
+        dd_table = [[table.resTable[s][h] for h in range(4)] for s in range(5)]
+
+        return {
+            'score': ns_score,
+            'ns_contracts': ns_contracts.strip(),
+            'ew_contracts': ew_contracts.strip(),
+            'dd_table': dd_table
+        }
+
     # Solutions
     #1	Find the maximum number of tricks for the side to play.  Return only one of the optimum cards and its score.
     #2	Find the maximum number of tricks for the side to play.  Return all optimum cards and their scores.

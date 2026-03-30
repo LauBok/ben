@@ -172,8 +172,14 @@ class DDSSolver:
                 continue
 
             par_str = pres.parScore[0].value.decode('utf-8')
-            ns_score = par_str.split()[1]
-            scores.append(int(ns_score))
+            ns_contracts = pres.parContractsString[0].value.decode('utf-8')
+            ew_contracts = pres.parContractsString[1].value.decode('utf-8')
+            ns_score = int(par_str.split()[1])
+            scores.append({
+                'score': ns_score,
+                'ns_contracts': ns_contracts.strip(),
+                'ew_contracts': ew_contracts.strip()
+            })
 
         return scores
 
@@ -203,6 +209,11 @@ class DDSSolver:
             sys.stderr.write(f"Error Code: {res}, Error Message: {error_message}, Hand {hand.encode('utf-8')}\n")
             raise Exception(error_message)
 
+        # Extract DD table first (before Par which may fail)
+        # C: resTable[strain][hand], ctypes now matches: (c_int * 4) * 5
+        # dd_table[strain][hand]: strains S=0,H=1,D=2,C=3,NT=4; hands N=0,E=1,S=2,W=3
+        dd_table = [[table.resTable[s][h] for h in range(4)] for s in range(5)]
+
         pres = ddss.parResults()
 
         v = 0
@@ -213,18 +224,34 @@ class DDSSolver:
         res = ddss.Par(myTable, pres, v)
         if res != 1:
             error_message = ddss.get_error_message(res)
-            sys.stderr.write(f"{Fore.RED}Error Code: {res}, Error Message: {error_message} {hand.encode('utf-8')}{Style.RESET_ALL}")
-            return None
+            sys.stderr.write(f"{Fore.RED}Par error: {res} — {error_message} {hand.encode('utf-8')}{Style.RESET_ALL}\n")
+            return {'score': 0, 'ns_contracts': '', 'ew_contracts': '', 'dd_table': dd_table}
 
         par = ctypes.pointer(pres)
 
-        if print_result:
-            print("NS score: {}".format(par.contents.parScore[0].value.decode('utf-8')))
-            print("EW score: {}".format(par.contents.parScore[1].value.decode('utf-8')))
+        ns_score_str = par.contents.parScore[0].value.decode('utf-8')
+        ew_score_str = par.contents.parScore[1].value.decode('utf-8')
+        ns_contracts = par.contents.parContractsString[0].value.decode('utf-8')
+        ew_contracts = par.contents.parContractsString[1].value.decode('utf-8')
 
-        par_str = par.contents.parScore[0].value.decode('utf-8')
-        ns_score = par_str.split()[1]
-        return int(ns_score)
+        if print_result:
+            print("NS score: {}".format(ns_score_str))
+            print("EW score: {}".format(ew_score_str))
+            print("NS contracts: {}".format(ns_contracts))
+            print("EW contracts: {}".format(ew_contracts))
+
+        try:
+            ns_score = int(ns_score_str.split()[1])
+        except (IndexError, ValueError) as ex:
+            sys.stderr.write(f"Par score parse error: '{ns_score_str}' — {ex}\n")
+            ns_score = 0
+
+        return {
+            'score': ns_score,
+            'ns_contracts': ns_contracts.strip(),
+            'ew_contracts': ew_contracts.strip(),
+            'dd_table': dd_table
+        }
 
     def _solve_helper(self, strain_i, leader_i, current_trick, hands_pbn, solutions):
         card_rank = [0x4000, 0x2000, 0x1000, 0x0800, 0x0400, 0x0200,

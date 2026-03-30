@@ -24,9 +24,9 @@ from sample import Sample
 DD = DDSolver(dds_mode=1)
 
 def get_par(hands, vulnerable):
-    hands_pbn = 'N:' + ' '.join(hands)    
-    par_score = DD.calculatepar(hands_pbn, vulnerable, False)
-    return par_score
+    hands_pbn = 'N:' + ' '.join(hands)
+    par_result = DD.calculatepar(hands_pbn, vulnerable, False)
+    return par_result['score'] if par_result else 0
 
 def get_dd_score(hands, contract, is_vulnerable):
     if contract is None:

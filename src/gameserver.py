@@ -41,6 +41,8 @@ import numpy as np
 from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 from sample import Sample
 from urllib.parse import parse_qs, urlparse
+import json
+import scoring
 from pbn2ben import load
 
 from colorama import Fore, Back, Style, init
@@ -152,7 +154,7 @@ configuration = conf.load(configfile)
 try:
     if (configuration["models"]['tf_version'] == "2"):
         from nn.models_tf2 import Models
-    else: 
+    else:
         # Default to version 1. of Tensorflow
         from nn.models_tf2 import Models
 except KeyError:
@@ -168,6 +170,43 @@ if opponentfile != "":
     sys.stderr.write(f"Expecting opponent: {opponents.name}\n")
 
 models = Models.from_conf(configuration, config_path.replace(os.path.sep + "src",""))
+
+# Multi-config support: load all bidding systems into a dict keyed by server ID
+# Server IDs: 0=BEN 2/1, 1=BEN SAYC, 2=GIB-BBO, 3=Default(21GF)
+SERVER_CONFIGS = {
+    '0': f"{config_path}/config/BEN-21GF.conf",
+    '1': f"{config_path}/config/BEN-Sayc.conf",
+    '2': f"{config_path}/config/GIB-BBO.conf",
+    '3': configfile,  # default
+}
+# servers dict: server_id -> (models, configuration)
+servers = {'3': (models, configuration)}  # default already loaded
+
+def load_server_configs():
+    """Load additional bidding system configs at startup."""
+    base_path = config_path.replace(os.path.sep + "src", "")
+    for sid, cpath in SERVER_CONFIGS.items():
+        if sid == '3':
+            continue  # already loaded
+        if not os.path.exists(cpath):
+            print(f"  Server {sid}: config not found at {cpath}, skipping")
+            continue
+        try:
+            print(f"  Loading server {sid}: {os.path.basename(cpath)}")
+            cfg = conf.load(cpath)
+            mdl = Models.from_conf(cfg, base_path)
+            servers[sid] = (mdl, cfg)
+            print(f"  Server {sid}: {cfg['models'].get('name', 'unnamed')} loaded")
+        except Exception as e:
+            print(f"  Server {sid}: failed to load - {e}")
+
+print("Loading additional bidding systems...")
+load_server_configs()
+print(f"Available servers: {list(servers.keys())}")
+
+def get_server(server_id):
+    """Return (models, configuration) for a server ID, falling back to default."""
+    return servers.get(str(server_id), servers['3'])
 
 # Enable model timing for performance analysis
 ModelTimer.enabled = True
@@ -275,12 +314,30 @@ async def handler(websocket, board_no, seed):
 
     # In websockets 15.0+, path is accessed via websocket.request.path
     path = websocket.request.path
-
-    driver = game.Driver(models, human.WebsocketFactory(websocket, verbose), Sample.from_conf(configuration, verbose), seed, dds, verbose)
-    play_only = False
-    driver.human = [False, False, False, False]
     parsed_url = urlparse(path)
     query_params = parse_qs(parsed_url.query)
+
+    # Select bidding system from server param
+    server_id = query_params.get('server', ['3'])[0]
+    srv_models, srv_config = get_server(server_id)
+
+    # Check for multiplayer connection
+    room_id = query_params.get('room', [None])[0]
+    if room_id:
+        seat_char = query_params.get('seat', ['S'])[0]
+        human_seats_str = query_params.get('human_seats', [''])[0]
+        board_seed = int(query_params.get('board_seed', ['1'])[0])
+        mode = query_params.get('mode', ['casual'])[0]
+        num_rounds = int(query_params.get('num_rounds', ['0'])[0])
+        table_num = int(query_params.get('table', ['1'])[0])
+        await mp_handler(websocket, room_id, seat_char, human_seats_str,
+                         board_seed, seed, mode, num_rounds, table_num,
+                         srv_models, srv_config)
+        return
+
+    driver = game.Driver(srv_models, human.WebsocketFactory(websocket, verbose), Sample.from_conf(srv_config, verbose), seed, dds, verbose)
+    play_only = False
+    driver.human = [False, False, False, False]
     deal = None
     N = query_params.get('N', [None])[0]
     if N: driver.human[0] = True
@@ -304,6 +361,10 @@ async def handler(websocket, board_no, seed):
     P = query_params.get('P', [None])[0]
     if P == "5":
         play_only = True
+    bidding_only_param = query_params.get('bidding_only', ["False"])[0]
+    auto_bid_param = query_params.get('auto_bid', [None])[0]
+    if auto_bid_param:
+        driver.auto_bid = True
     deal = query_params.get('deal', [None])[0]
     board_no_query = query_params.get('board_no')
     board_number = None
@@ -320,9 +381,9 @@ async def handler(websocket, board_no, seed):
         np.random.seed(board_number)
         split_values = deal[1:-1].replace("'","").split(',')
         rdeal = tuple(value.strip() for value in split_values)
-        driver.set_deal(board_number, *rdeal, play_only)
+        driver.set_deal(board_number, *rdeal, play_only, bidding_only=bidding_only_param)
         print(f"Board: {board_number} {rdeal} {play_only}")
-    else: 
+    else:
         # If random
         if random:
             #Just take a random"
@@ -331,14 +392,14 @@ async def handler(websocket, board_no, seed):
             # example of to use a fixed deal
             # rdeal = ('AK64.8642.Q32.Q6 9.QT973.AT5.KJ94 QT532.J5.KJ974.7 J87.AK.86.AT8532', 'W None')
             print(f"Board: {board_number} {rdeal}")
-            driver.set_deal(board_number, *rdeal, False)
+            driver.set_deal(board_number, *rdeal, False, bidding_only=bidding_only_param)
         else:
             # Select the next from the provided inputfile
             rdeal = boards[board_no[0]]['deal']
             auction = boards[board_no[0]]['auction']
             print(f"{Fore.LIGHTBLUE_EX}Board: {board_no[0]+1} {rdeal}{Fore.RESET}")
             np.random.seed(board_no[0]+1)
-            driver.set_deal(board_no[0] + 1, rdeal, auction, play_only)
+            driver.set_deal(board_no[0] + 1, rdeal, auction, play_only, bidding_only=bidding_only_param)
 
     log_memory_usage()
     ModelTimer.reset()  # Reset timing stats for this request
@@ -361,13 +422,555 @@ async def handler(websocket, board_no, seed):
         handle_exception(e)
         sys.exit(1)
 
+# === Multiplayer session management ===
+
+mp_sessions = {}  # session_key -> SessionState
+
+
+def generate_board_seeds(base_seed, count):
+    """Generate a reproducible sequence of board seeds from a base seed."""
+    rng = np.random.RandomState(base_seed)
+    return [int(rng.randint(1, 2000000000)) for _ in range(count)]
+
+
+def extract_board_result(driver):
+    """Extract scoring result from a completed Driver."""
+    contract = driver.contract
+    if contract is None:
+        return {
+            'board_no': driver.board_number,
+            'contract': None,
+            'declarer': None,
+            'tricks': 0,
+            'score_ns': 0,
+            'dict_data': driver.to_dict()
+        }
+    decl_i = driver.decl_i
+    is_vuln = driver.vuln_ns if decl_i in (0, 2) else driver.vuln_ew
+    raw_score = scoring.score(contract, is_vuln, driver.tricks_taken)
+    score_ns = raw_score if decl_i in (0, 2) else -raw_score
+    return {
+        'board_no': driver.board_number,
+        'contract': contract,
+        'declarer': decl_i,
+        'tricks': driver.tricks_taken,
+        'score_ns': score_ns,
+        'dict_data': driver.to_dict()
+    }
+
+
+async def drain_sockets(sockets):
+    """Drain any stale messages (e.g. trick confirms, keepalive pings) from all sockets."""
+    async def drain_one(ws):
+        while True:
+            try:
+                await asyncio.wait_for(ws.recv(), timeout=0.1)
+            except Exception:
+                break
+    await asyncio.gather(*(drain_one(ws) for ws in sockets.values()))
+
+
+async def wait_for_next_board(sockets, timeout=600):
+    """Wait for all human players to send 'next_board'. Ignores pings and other messages."""
+    ready = set()
+    needed = set(sockets.keys())
+    deadline = time.time() + timeout
+    while ready < needed:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            print("MP: Timeout waiting for next_board from all players")
+            break
+        # Collect recv tasks for sockets that haven't signaled yet
+        tasks = {}
+        for si, ws in sockets.items():
+            if si not in ready:
+                tasks[asyncio.create_task(ws.recv())] = si
+        if not tasks:
+            break
+        done, pending = await asyncio.wait(tasks.keys(), timeout=min(remaining, 30),
+                                           return_when=asyncio.FIRST_COMPLETED)
+        for t in pending:
+            t.cancel()
+        for t in done:
+            try:
+                msg = t.result()
+                seat_id = tasks[t]
+                if msg == 'next_board':
+                    ready.add(seat_id)
+                # ignore pings and other messages
+            except Exception:
+                # socket closed — treat as ready to avoid blocking
+                ready.add(tasks[t])
+
+
+async def broadcast_to_sockets(sockets, msg_dict):
+    """Send a JSON message to all sockets, ignoring errors."""
+    msg = json.dumps(msg_dict)
+    for ws in sockets.values():
+        try:
+            await ws.send(msg)
+        except Exception:
+            pass
+
+
+async def session_loop(session, seed):
+    """Run multiple boards in sequence for a multiplayer session."""
+    sockets = session['sockets']
+    human_seats = session['human_seats']
+    mode = session['mode']
+    num_rounds = session['num_rounds']
+    board_seeds = session['board_seeds']
+    max_boards = num_rounds if num_rounds > 0 else 999
+    s_models = session.get('srv_models', models)
+    s_config = session.get('srv_config', configuration)
+
+    # Send session_start
+    await broadcast_to_sockets(sockets, {
+        'message': 'session_start',
+        'mode': mode,
+        'num_rounds': num_rounds
+    })
+
+    results = []
+    cumulative_ns = 0
+    cumulative_ew = 0
+    cumulative_imps = 0
+
+    for board_idx in range(min(max_boards, len(board_seeds))):
+        if session.get('ended'):
+            break
+
+        board_seed = board_seeds[board_idx]
+
+        try:
+            # Drain stale messages (trick confirms, keepalive pings) before new board
+            await drain_sockets(sockets)
+
+            factory = human.MultiplayerWebsocketFactory(sockets, verbose)
+            driver = game.Driver(s_models, factory, Sample.from_conf(s_config, verbose), seed, dds, verbose)
+            driver.human = [i in human_seats for i in range(4)]
+
+            np.random.seed(board_seed)
+            rdeal = game.random_deal_board(board_seed)
+            print(f"MP [{mode}] Board {board_idx + 1}/{max_boards}: seed={board_seed}")
+            driver.set_deal(board_seed, *rdeal, False)
+
+            log_memory_usage()
+            ModelTimer.reset()
+            t_start = time.time()
+
+            # Dual mode: start shadow AI table concurrently with human play
+            shadow_task = None
+            if mode == 'dual':
+                async def run_shadow_table(bs):
+                    try:
+                        sf = human.SilentFactory()
+                        sd = game.Driver(s_models, sf, Sample.from_conf(s_config, verbose), seed, dds, verbose)
+                        sd.human = [False, False, False, False]
+                        np.random.seed(bs)
+                        sr = game.random_deal_board(bs)
+                        sd.set_deal(bs, *sr, False)
+                        await sd.run(time.time())
+                        return extract_board_result(sd)
+                    except Exception as e:
+                        print(f'MP: Shadow table error: {e}')
+                        return None
+                shadow_task = asyncio.create_task(run_shadow_table(board_seed))
+
+            await driver.run(t_start)
+            elapsed = time.time() - t_start
+            print(f'{Fore.CYAN}{datetime.datetime.now():%Y-%m-%d %H:%M:%S} MP Board {board_idx + 1} played in {elapsed:0.1f}s{Fore.RESET}')
+            gc.collect()
+
+            result = extract_board_result(driver)
+            results.append(result)
+
+            # Accumulate scores
+            ns = result['score_ns']
+            cumulative_ns += max(0, ns)
+            cumulative_ew += max(0, -ns)
+
+            # Dual mode: wait for shadow AI table result
+            if shadow_task is not None:
+                ai_result = await shadow_task
+                if ai_result is not None:
+                    diff = ns - ai_result['score_ns']
+                    imp_sign = 1 if diff >= 0 else -1
+                    imps = scoring.diff_to_imps(diff) * imp_sign
+                    cumulative_imps += imps
+                    result['ai_result'] = ai_result
+                    result['imp'] = imps
+                    gc.collect()
+
+                    await broadcast_to_sockets(sockets, {
+                        'message': 'dual_table_result',
+                        'your_score': ns,
+                        'ai_score': ai_result['score_ns'],
+                        'ai_contract': ai_result['contract'],
+                        'ai_declarer': ai_result['declarer'],
+                        'ai_tricks': ai_result['tricks'],
+                        'imp': imps,
+                        'cumulative_imps': cumulative_imps,
+                        'ai_dict': ai_result['dict_data']
+                    })
+
+            # Send board_transition (not for the last board)
+            is_last = (board_idx == min(max_boards, len(board_seeds)) - 1)
+            if session.get('ended'):
+                is_last = True
+
+            await broadcast_to_sockets(sockets, {
+                'message': 'board_transition',
+                'board_idx': board_idx,
+                'total_boards': num_rounds,
+                'score_ns': ns,
+                'cumulative_ns': cumulative_ns,
+                'cumulative_ew': cumulative_ew,
+                'cumulative_imps': cumulative_imps,
+                'has_next': not is_last,
+                'mode': mode,
+                'contract': result['contract'],
+                'tricks': result['tricks'],
+                'declarer': result['declarer']
+            })
+
+            if not is_last:
+                # Wait for all human players to click "Next Board"
+                await wait_for_next_board(sockets)
+
+        except (ConnectionClosedOK, ConnectionClosedError, ConnectionAbortedError):
+            print(f'MP: Player disconnected during board {board_idx + 1}')
+            break
+        except Exception as e:
+            print(f'MP: Error in board {board_idx + 1}')
+            handle_exception(e)
+            break
+
+    # Send session_end with all results
+    # For match modes, include full analysis data; for casual/dual, summary
+    session_end_results = []
+    for r in results:
+        entry = {
+            'board_no': r['board_no'],
+            'contract': r['contract'],
+            'declarer': r['declarer'],
+            'tricks': r['tricks'],
+            'score_ns': r['score_ns'],
+            'imp': r.get('imp', 0),
+            'dict_data': r['dict_data']
+        }
+        if 'ai_result' in r:
+            entry['ai_score'] = r['ai_result']['score_ns']
+        session_end_results.append(entry)
+
+    await broadcast_to_sockets(sockets, {
+        'message': 'session_end',
+        'mode': mode,
+        'boards_played': len(results),
+        'results': session_end_results,
+        'cumulative_ns': cumulative_ns,
+        'cumulative_ew': cumulative_ew,
+        'cumulative_imps': cumulative_imps
+    })
+
+
+async def match_session_loop(session, seed):
+    """Run a match session with two tables playing the same boards."""
+    mode = session['mode']
+    num_rounds = session['num_rounds']
+    board_seeds = session['board_seeds']
+    s_models = session.get('srv_models', models)
+    s_config = session.get('srv_config', configuration)
+
+    t1_sockets = session['table1_sockets']
+    t2_sockets = session['table2_sockets']
+    t1_human = session['table1_human_seats']
+    t2_human = session['table2_human_seats']
+    all_sockets = {**t1_sockets, **{k + 10: v for k, v in t2_sockets.items()}}
+
+    # Send session_start to both tables
+    for sockets in [t1_sockets, t2_sockets]:
+        await broadcast_to_sockets(sockets, {
+            'message': 'session_start',
+            'mode': mode,
+            'num_rounds': num_rounds
+        })
+
+    t1_results = []
+    t2_results = []
+    cumulative_imps = 0
+
+    for board_idx in range(num_rounds):
+        if session.get('ended'):
+            break
+
+        board_seed = board_seeds[board_idx]
+        print(f"MP [{mode}] Board {board_idx + 1}/{num_rounds}: seed={board_seed}")
+
+        # Run both tables concurrently
+        async def run_table(sockets, human_seats, table_name):
+            factory = human.MultiplayerWebsocketFactory(sockets, verbose)
+            driver = game.Driver(s_models, factory, Sample.from_conf(s_config, verbose), seed, dds, verbose)
+            driver.human = [i in human_seats for i in range(4)]
+            np.random.seed(board_seed)
+            rdeal = game.random_deal_board(board_seed)
+            driver.set_deal(board_seed, *rdeal, False)
+            t_start = time.time()
+            await driver.run(t_start)
+            print(f'{Fore.CYAN}  {table_name} done in {time.time() - t_start:0.1f}s{Fore.RESET}')
+            return extract_board_result(driver)
+
+        try:
+            r1, r2 = await asyncio.gather(
+                run_table(t1_sockets, t1_human, 'Table1'),
+                run_table(t2_sockets, t2_human, 'Table2')
+            )
+            gc.collect()
+
+            t1_results.append(r1)
+            t2_results.append(r2)
+
+            # IMP calculation
+            if mode == 'match2v2':
+                # Both tables: NS vs AI-EW. Compare NS scores.
+                diff = r1['score_ns'] - r2['score_ns']
+            else:
+                # 4v4: Team A = Table1 NS + Table2 EW
+                # Team A board score = table1_ns + (-table2_ns)
+                diff = r1['score_ns'] + (-r2['score_ns'])
+            imp_sign = 1 if diff >= 0 else -1
+            imps = scoring.diff_to_imps(diff) * imp_sign
+            cumulative_imps += imps
+
+            # In match mode, send minimal transition (no scores shown)
+            is_last = (board_idx == num_rounds - 1)
+            for sockets in [t1_sockets, t2_sockets]:
+                await broadcast_to_sockets(sockets, {
+                    'message': 'board_transition',
+                    'board_idx': board_idx,
+                    'total_boards': num_rounds,
+                    'has_next': not is_last,
+                    'mode': mode
+                })
+
+            if not is_last:
+                await asyncio.sleep(3)
+
+        except (ConnectionClosedOK, ConnectionClosedError, ConnectionAbortedError):
+            print(f'MP Match: Player disconnected during board {board_idx + 1}')
+            break
+        except Exception as e:
+            print(f'MP Match: Error in board {board_idx + 1}')
+            handle_exception(e)
+            break
+
+    # Session end: send full results to both tables
+    session_end_data = {
+        'message': 'session_end',
+        'mode': mode,
+        'boards_played': len(t1_results),
+        'cumulative_imps': cumulative_imps,
+        'table1_results': [{
+            'board_no': r['board_no'], 'contract': r['contract'],
+            'declarer': r['declarer'], 'tricks': r['tricks'], 'score_ns': r['score_ns'],
+            'dict_data': r['dict_data']
+        } for r in t1_results],
+        'table2_results': [{
+            'board_no': r['board_no'], 'contract': r['contract'],
+            'declarer': r['declarer'], 'tricks': r['tricks'], 'score_ns': r['score_ns'],
+            'dict_data': r['dict_data']
+        } for r in t2_results]
+    }
+    for sockets in [t1_sockets, t2_sockets]:
+        await broadcast_to_sockets(sockets, session_end_data)
+
+
+async def mp_handler(websocket, room_id, seat_char, human_seats_str,
+                     board_seed, seed, mode='casual', num_rounds=0, table_num=1,
+                     srv_models=None, srv_config=None):
+    """Handle a multiplayer player connection."""
+    if srv_models is None:
+        srv_models = models
+    if srv_config is None:
+        srv_config = configuration
+    seat_idx = 'NESW'.index(seat_char)
+    human_seats = set('NESW'.index(c) for c in human_seats_str)
+    is_match = mode in ('match2v2', 'match4v4')
+    session_key = room_id
+
+    print(f'{datetime.datetime.now():%Y-%m-%d %H:%M:%S} MP: Player {seat_char} joining room {room_id} ({mode}, table {table_num})')
+
+    if session_key not in mp_sessions:
+        max_boards = num_rounds if num_rounds > 0 else 100
+        mp_sessions[session_key] = {
+            'mode': mode,
+            'num_rounds': num_rounds,
+            'board_seeds': generate_board_seeds(board_seed, max_boards),
+            'ended': False,
+            # Single-table (casual/dual)
+            'sockets': {},
+            'human_seats': human_seats,
+            'ready': asyncio.Event(),
+            'done': asyncio.Event(),
+            # Multi-table (match modes)
+            'table1_sockets': {},
+            'table2_sockets': {},
+            'table1_human_seats': set(),
+            'table2_human_seats': set(),
+            'table1_ready': asyncio.Event(),
+            'table2_ready': asyncio.Event(),
+            'srv_models': srv_models,
+            'srv_config': srv_config,
+        }
+
+    session = mp_sessions[session_key]
+
+    if is_match:
+        table_key = f'table{table_num}_sockets'
+        human_key = f'table{table_num}_human_seats'
+        ready_key = f'table{table_num}_ready'
+        session[table_key][seat_idx] = websocket
+        session[human_key].update(human_seats)
+    else:
+        session['sockets'][seat_idx] = websocket
+
+    # Notify this player they're connected
+    await websocket.send(json.dumps({
+        'message': 'mp_connected',
+        'seat': seat_char,
+        'room': room_id,
+        'mode': mode,
+        'table': table_num
+    }))
+
+    # Notify others in same table
+    if is_match:
+        table_sockets = session[f'table{table_num}_sockets']
+    else:
+        table_sockets = session['sockets']
+    for si, ws in table_sockets.items():
+        if si != seat_idx:
+            try:
+                await ws.send(json.dumps({
+                    'message': 'mp_player_joined',
+                    'seat': seat_char,
+                    'connected': ['NESW'[s] for s in sorted(table_sockets.keys())]
+                }))
+            except Exception:
+                pass
+
+    # Check readiness
+    if is_match:
+        local_human = session[human_key]
+        local_sockets = session[f'table{table_num}_sockets']
+        if local_human.issubset(set(local_sockets.keys())):
+            session[ready_key].set()
+        # Wait for BOTH tables
+        await session['table1_ready'].wait()
+        await session['table2_ready'].wait()
+    else:
+        if human_seats.issubset(set(session['sockets'].keys())):
+            session['ready'].set()
+        await session['ready'].wait()
+
+    # Primary handler runs the session loop
+    if is_match:
+        # For match: primary is lowest seat on table 1
+        primary_seat = min(session['table1_human_seats'])
+        if table_num == 1 and seat_idx == primary_seat:
+            try:
+                await match_session_loop(session, seed)
+            except (ConnectionClosedOK, ConnectionClosedError, ConnectionAbortedError):
+                print(f'MP Match: Player disconnected in room {room_id}')
+            except Exception as e:
+                print(f'MP Match: Error in room {room_id}')
+                handle_exception(e)
+            finally:
+                session['done'].set()
+                await asyncio.sleep(5)
+                mp_sessions.pop(session_key, None)
+        else:
+            try:
+                await session['done'].wait()
+            except Exception:
+                pass
+    else:
+        # Single-table modes (casual/dual)
+        primary_seat = min(session['human_seats'])
+        if seat_idx == primary_seat:
+            try:
+                await session_loop(session, seed)
+            except (ConnectionClosedOK, ConnectionClosedError, ConnectionAbortedError):
+                print(f'MP: Player disconnected in room {room_id}')
+            except Exception as e:
+                print(f'MP: Error in room {room_id}')
+                handle_exception(e)
+            finally:
+                session['done'].set()
+                await asyncio.sleep(5)
+                mp_sessions.pop(session_key, None)
+        else:
+            try:
+                await session['done'].wait()
+            except Exception:
+                pass
+
+
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend')
+
+MIME_TYPES = {
+    '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
+    '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
+    '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+    '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
+}
+
+async def serve_static(connection, request):
+    """Serve static files for HTTP requests; return None to proceed with WebSocket."""
+    from websockets.http11 import Response
+
+    # WebSocket upgrade — let it through
+    if request.headers.get('Upgrade', '').lower() == 'websocket':
+        return None
+
+    path = request.path
+    if path == '/' or path == '':
+        path = '/menu.html'
+
+    # Strip query string
+    if '?' in path:
+        path = path.split('?', 1)[0]
+
+    # Strip leading slash and resolve file
+    rel = path.lstrip('/')
+    filepath = os.path.normpath(os.path.join(FRONTEND_DIR, rel))
+
+    # Security: ensure path stays within FRONTEND_DIR
+    if not filepath.startswith(os.path.normpath(FRONTEND_DIR)):
+        return Response(403, 'Forbidden', websockets.Headers())
+
+    if not os.path.isfile(filepath):
+        return Response(404, 'Not Found', websockets.Headers())
+
+    ext = os.path.splitext(filepath)[1].lower()
+    content_type = MIME_TYPES.get(ext, 'application/octet-stream')
+
+    with open(filepath, 'rb') as f:
+        body = f.read()
+
+    headers = websockets.Headers([('Content-Type', content_type), ('Content-Length', str(len(body)))])
+    return Response(200, 'OK', headers, body)
+
+
 async def main():
     sys.stderr.write(f"{Fore.CYAN}{datetime.datetime.now():%Y-%m-%d %H:%M:%S} Listening on port: {port}{Fore.RESET}\n")
     sys.stderr.write(f"websockets version: {websockets.__version__}\n")
 
     start_server = websockets.serve(functools.partial(handler, board_no=board_no, seed=seed), "0.0.0.0", port,
-        ping_timeout=60,  # 60 seconds timeout for pings
-        close_timeout=60  # 60 seconds timeout for closing the connection
+        ping_interval=120,  # send ping every 120 seconds
+        ping_timeout=300,  # 300 seconds timeout for pong (AI computation can block event loop)
+        close_timeout=60,  # 60 seconds timeout for closing the connection
+        process_request=serve_static
         )
     try:
         await start_server

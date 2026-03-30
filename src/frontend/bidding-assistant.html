@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bridge Bidding Assistant - BEN</title>
+    <link rel="stylesheet" href="bidding-assistant.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+
+<div class="ba-header">
+    <h1>Bridge Bidding Assistant</h1>
+    <a href="/home" class="ba-home-link">Home</a>
+</div>
+
+<div class="ba-container">
+
+    <!-- Setup Panel -->
+    <div class="ba-setup">
+        <div class="ba-setup-group">
+            <label for="ba-dealer">Dealer</label>
+            <select id="ba-dealer">
+                <option value="N" selected>North</option>
+                <option value="E">East</option>
+                <option value="S">South</option>
+                <option value="W">West</option>
+            </select>
+        </div>
+        <div class="ba-setup-group">
+            <label for="ba-vul">Vulnerability</label>
+            <select id="ba-vul">
+                <option value="" selected>None</option>
+                <option value="NS">N-S</option>
+                <option value="EW">E-W</option>
+                <option value="BOTH">Both</option>
+            </select>
+        </div>
+        <div class="ba-setup-group">
+            <label for="ba-seat">Your Seat</label>
+            <select id="ba-seat">
+                <option value="N">North</option>
+                <option value="E">East</option>
+                <option value="S" selected>South</option>
+                <option value="W">West</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Main Content: Hand + Auction side by side -->
+    <div class="ba-main">
+
+        <!-- Left: Hand Input -->
+        <div class="ba-hand-panel">
+            <h2>Your Hand</h2>
+
+            <!-- Visual hand display -->
+            <div id="ba-hand-display" class="ba-hand-display">
+                <div class="ba-hand-empty">Select 13 cards below</div>
+            </div>
+
+            <!-- Card selector grid -->
+            <div class="ba-card-selector">
+                <div class="ba-card-row" data-suit="S">
+                    <span class="ba-suit-label ba-spades">&spades;</span>
+                    <div class="ba-card-buttons" id="ba-cards-S"></div>
+                </div>
+                <div class="ba-card-row" data-suit="H">
+                    <span class="ba-suit-label ba-hearts">&hearts;</span>
+                    <div class="ba-card-buttons" id="ba-cards-H"></div>
+                </div>
+                <div class="ba-card-row" data-suit="D">
+                    <span class="ba-suit-label ba-diamonds">&diams;</span>
+                    <div class="ba-card-buttons" id="ba-cards-D"></div>
+                </div>
+                <div class="ba-card-row" data-suit="C">
+                    <span class="ba-suit-label ba-clubs">&clubs;</span>
+                    <div class="ba-card-buttons" id="ba-cards-C"></div>
+                </div>
+            </div>
+
+            <div class="ba-card-count" id="ba-card-count">0 / 13 cards selected</div>
+
+            <!-- PBN text input -->
+            <div class="ba-pbn-input">
+                <input type="text" id="ba-pbn" placeholder="Or type PBN: AKQ74.K.T3.AK7">
+                <button id="ba-pbn-apply">Apply</button>
+            </div>
+        </div>
+
+        <!-- Right: Auction -->
+        <div class="ba-auction-panel">
+            <h2>Auction</h2>
+
+            <!-- Auction table -->
+            <div id="ba-auction-table" class="ba-auction-table"></div>
+
+            <!-- Bidding box -->
+            <div class="ba-bidding-box" id="ba-bidding-box">
+                <div class="ba-bb-levels" id="ba-bb-levels"></div>
+                <div class="ba-bb-suits" id="ba-bb-suits"></div>
+                <div class="ba-bb-actions" id="ba-bb-actions"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Action Bar -->
+    <div class="ba-action-bar">
+        <button id="ba-get-advice" class="ba-btn-primary">Get Advice from BEN</button>
+        <button id="ba-reset" class="ba-btn-secondary">Reset</button>
+    </div>
+
+    <!-- Loading spinner -->
+    <div id="ba-loader" class="ba-loader" style="display:none">
+        <div class="ba-spinner"></div>
+        <span>Thinking...</span>
+    </div>
+
+    <!-- Results Panel -->
+    <div id="ba-results" class="ba-results" style="display:none">
+
+        <div id="ba-recommendation" class="ba-result-card">
+            <h3>Recommendation</h3>
+            <div id="ba-rec-content"></div>
+        </div>
+
+        <div id="ba-candidates" class="ba-result-card" style="display:none">
+            <h3>Candidate Bids</h3>
+            <div id="ba-cand-content"></div>
+        </div>
+
+        <div id="ba-inference" class="ba-result-card" style="display:none">
+            <h3>Hand Inference</h3>
+            <div id="ba-inf-content"></div>
+        </div>
+
+        <div id="ba-explanations" class="ba-result-card" style="display:none">
+            <h3>Auction Explanations</h3>
+            <div id="ba-expl-content"></div>
+        </div>
+
+        <div id="ba-hcp-dist" class="ba-result-card" style="display:none">
+            <h3>HCP Distribution (from samples)</h3>
+            <div id="ba-hcp-dist-content"></div>
+        </div>
+
+        <div id="ba-suit-dist" class="ba-result-card" style="display:none">
+            <h3>Suit Length Distribution</h3>
+            <div id="ba-suit-dist-content"></div>
+        </div>
+
+        <div id="ba-fit" class="ba-result-card" style="display:none">
+            <h3>Partnership Analysis</h3>
+            <div id="ba-fit-content"></div>
+        </div>
+
+        <div id="ba-samples" class="ba-result-card" style="display:none">
+            <h3>Sample Hands</h3>
+            <div id="ba-samples-content"></div>
+        </div>
+    </div>
+
+</div>
+
+<script src="bidding-assistant.js"></script>
+</body>
+</html>

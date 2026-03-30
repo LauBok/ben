@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bridge Play - BEN</title>
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="play.css">
+</head>
+<body>
+
+<div class="bp-header">
+    <h1><a href="menu.html" class="bp-brand-link"><span class="bp-brand">BEN</span></a> — Bridge Play</h1>
+    <a href="menu.html" class="bp-home-link">Home</a>
+</div>
+
+<div class="bp-container">
+
+    <!-- Setup Panel -->
+    <div id="bp-setup" class="bp-setup">
+        <h2>Game Setup</h2>
+
+        <div class="bp-setup-section">
+            <h3>Deal</h3>
+            <div class="bp-setup-row">
+                <label><input type="radio" name="bp-deal-type" value="random" checked> Random deal</label>
+                <label><input type="radio" name="bp-deal-type" value="manual"> Enter deal</label>
+            </div>
+            <div class="bp-setup-row">
+                <label for="bp-board-no">Board #</label>
+                <input type="text" id="bp-board-no" placeholder="optional" class="bp-input-sm">
+            </div>
+            <div id="bp-deal-input" class="bp-setup-row" style="display:none">
+                <label for="bp-deal-text">Deal (N E S W hands)</label>
+                <textarea id="bp-deal-text" rows="2" placeholder="J2.QJ53.T8754.84 64.K62.Q62.AJT65 KQ985.A.A93.K732 AT73.T9874.KJ.Q9"></textarea>
+            </div>
+            <div id="bp-manual-opts" style="display:none">
+                <div class="bp-setup-row">
+                    <label for="bp-dealer">Dealer</label>
+                    <select id="bp-dealer">
+                        <option value="N">North</option>
+                        <option value="E">East</option>
+                        <option value="S">South</option>
+                        <option value="W">West</option>
+                    </select>
+                </div>
+                <div class="bp-setup-row">
+                    <label for="bp-vul">Vulnerability</label>
+                    <select id="bp-vul">
+                        <option value="None">None</option>
+                        <option value="N-S">N-S</option>
+                        <option value="E-W">E-W</option>
+                        <option value="Both">Both</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="bp-setup-section">
+            <h3>Players</h3>
+            <div class="bp-setup-row bp-checkboxes">
+                <label><input type="checkbox" id="bp-human-N"> North</label>
+                <label><input type="checkbox" id="bp-human-E"> East</label>
+                <label><input type="checkbox" id="bp-human-S" checked> South</label>
+                <label><input type="checkbox" id="bp-human-W"> West</label>
+            </div>
+            <div class="bp-setup-row">
+                <label><input type="checkbox" id="bp-human-declares" checked> Human always plays the cards</label>
+            </div>
+            <div class="bp-setup-row">
+                <label><input type="checkbox" id="bp-matchpoint"> Matchpoint scoring</label>
+            </div>
+        </div>
+
+        <div class="bp-setup-section">
+            <h3>Server</h3>
+            <div class="bp-setup-row">
+                <select id="bp-server">
+                    <option value="3" selected>Default (21GF)</option>
+                    <option value="0">BEN 2/1</option>
+                    <option value="1">BEN SAYC</option>
+                    <option value="2">GIB-BBO</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="bp-setup-actions">
+            <button id="bp-start" class="bp-btn-primary">Start Game</button>
+        </div>
+    </div>
+
+    <!-- Game Area -->
+    <!-- Session bar (multi-board) -->
+    <div id="bp-session-bar" class="bp-session-bar" style="display:none">
+        <span id="bp-session-mode" class="bp-session-mode"></span>
+        <span id="bp-session-progress" class="bp-session-progress"></span>
+        <span id="bp-session-score" class="bp-session-score"></span>
+    </div>
+
+    <div id="bp-game" class="bp-game" style="display:none">
+        <div class="bp-game-layout">
+
+            <!-- Main table area -->
+            <div class="bp-table-area">
+                <div class="bp-table">
+                    <div id="bp-board-display" class="bp-board-display"></div>
+
+                    <div class="bp-hand-north">
+                        <div id="bp-label-n" class="bp-hand-label">North</div>
+                        <div id="bp-north" class="bp-hand"></div>
+                    </div>
+
+                    <div class="bp-hand-west">
+                        <div id="bp-label-w" class="bp-hand-label">West</div>
+                        <div id="bp-west" class="bp-hand"></div>
+                    </div>
+
+                    <div class="bp-trick-area">
+                        <div id="bp-trick-n" class="bp-trick-slot bp-slot-n"></div>
+                        <div id="bp-trick-w" class="bp-trick-slot bp-slot-w"></div>
+                        <div id="bp-trick-e" class="bp-trick-slot bp-slot-e"></div>
+                        <div id="bp-trick-s" class="bp-trick-slot bp-slot-s"></div>
+                    </div>
+
+                    <div class="bp-hand-east">
+                        <div id="bp-label-e" class="bp-hand-label">East</div>
+                        <div id="bp-east" class="bp-hand"></div>
+                    </div>
+
+                    <div class="bp-hand-south">
+                        <div id="bp-label-s" class="bp-hand-label">South</div>
+                        <div id="bp-south" class="bp-hand"></div>
+                    </div>
+                </div>
+
+                <!-- Status message -->
+                <div id="bp-status" class="bp-status"></div>
+            </div>
+
+            <!-- Side panel -->
+            <div class="bp-side-panel">
+                <div class="bp-panel-section">
+                    <h3>Auction</h3>
+                    <div id="bp-auction-table"></div>
+                </div>
+
+                <div id="bp-bidding-box" class="bp-panel-section" style="display:none">
+                    <div id="bp-bb-levels" class="bp-bb-levels"></div>
+                    <div id="bp-bb-suits" class="bp-bb-suits" style="display:none"></div>
+                    <div class="bp-bb-calls">
+                        <button class="bp-bb-btn bp-bb-pass">PASS</button>
+                        <button class="bp-bb-btn bp-bb-dbl" disabled>X</button>
+                        <button class="bp-bb-btn bp-bb-rdbl" disabled>XX</button>
+                        <button class="bp-bb-btn bp-bb-hint">Hint</button>
+                    </div>
+                </div>
+
+                <div id="bp-inference-panel" class="bp-panel-section" style="display:none">
+                    <h3>Hand Inference</h3>
+                    <div id="bp-inference-content"></div>
+                </div>
+
+                <div id="bp-contract-panel" class="bp-panel-section" style="display:none">
+                    <h3>Contract</h3>
+                    <div id="bp-contract-display"></div>
+                </div>
+
+                <div class="bp-panel-section">
+                    <h3>Tricks</h3>
+                    <div id="bp-tricks-display">NS: 0 &nbsp; EW: 0</div>
+                    <div id="bp-tricks-bar" class="bp-tricks-bar" style="display:none">
+                        <div id="bp-tricks-ns-bar" class="bp-tricks-ns" style="width:0"></div>
+                        <div id="bp-tricks-ew-bar" class="bp-tricks-ew" style="width:0"></div>
+                    </div>
+                </div>
+
+                <div id="bp-actions-panel" class="bp-panel-section">
+                    <button id="bp-last-trick" class="bp-btn-sm" style="display:none">Show Last Trick</button>
+                    <button id="bp-claim-btn" class="bp-btn-sm" style="display:none">Claim...</button>
+                    <button id="bp-concede-btn" class="bp-btn-sm" style="display:none">Concede</button>
+                </div>
+
+                <div class="bp-panel-section" style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button id="bp-new-game" class="bp-btn-secondary">New Game</button>
+                    <button id="bp-replay" class="bp-btn-secondary" style="display:none">Replay</button>
+                    <button id="bp-back-to-review" class="bp-btn-secondary" style="display:none">Back to Review</button>
+                    <button id="bp-restart-bidding" class="bp-btn-secondary" style="display:none">Restart Bidding</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hint panel (inline, replaces alert) -->
+        <div id="bp-hint-panel" class="bp-hint-panel"><span class="bp-hint-placeholder">Click "Hint" during bidding to get BEN's suggestion</span></div>
+
+        <!-- Explanations -->
+        <div id="bp-explain" class="bp-explain"></div>
+    </div>
+
+    <!-- Claim dialog -->
+    <div id="bp-claim-dialog" class="bp-overlay" style="display:none">
+        <div class="bp-dialog">
+            <h3>Claim Tricks</h3>
+            <div id="bp-claim-options" class="bp-claim-options"></div>
+            <button id="bp-claim-cancel" class="bp-btn-secondary">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Feedback dialog -->
+    <div id="bp-feedback-dialog" class="bp-overlay" style="display:none">
+        <div class="bp-dialog">
+            <h3>Game Complete</h3>
+            <div id="bp-result-display" class="bp-result-display"></div>
+            <textarea id="bp-feedback-text" rows="2" placeholder="Comments (optional)"></textarea>
+            <div class="bp-feedback-buttons">
+                <button class="bp-fb-btn" data-quality="bad">Bad</button>
+                <button class="bp-fb-btn" data-quality="ok">OK</button>
+                <button class="bp-fb-btn" data-quality="good">Good</button>
+                <button class="bp-fb-btn bp-fb-skip" data-quality="skip">Don't Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Post-Game Review -->
+    <div id="bp-review" class="bp-review" style="display:none">
+        <h2>Post-Game Review</h2>
+
+        <div id="bp-review-summary" class="bp-review-section"></div>
+        <div id="bp-review-analysis-status" class="bp-review-analysis-status" style="display:none"></div>
+
+        <div id="bp-review-bidding" class="bp-review-section" style="display:none">
+            <h3>Bidding Review</h3>
+            <div id="bp-review-bidding-content"></div>
+        </div>
+
+        <div id="bp-review-equity" class="bp-review-section" style="display:none">
+            <h3>Trick Equity Graph</h3>
+            <canvas id="bp-equity-canvas" width="600" height="260"></canvas>
+        </div>
+
+        <div id="bp-review-play" class="bp-review-section" style="display:none">
+            <h3>Play Review</h3>
+            <div class="bp-review-trick-nav">
+                <button id="bp-review-prev" class="bp-btn-sm">&larr; Prev</button>
+                <span id="bp-review-trick-label">Trick 1</span>
+                <button id="bp-review-next" class="bp-btn-sm">Next &rarr;</button>
+            </div>
+            <div id="bp-review-play-content"></div>
+        </div>
+
+        <div id="bp-review-errors" class="bp-review-section" style="display:none">
+            <h3>Key Moments</h3>
+            <div id="bp-review-errors-content"></div>
+        </div>
+    </div>
+
+    <!-- Loading spinner -->
+    <div id="bp-loader" class="bp-loader" style="display:none">
+        <div class="bp-spinner"></div>
+        <span>Thinking...</span>
+    </div>
+
+</div>
+
+<!-- Board transition overlay (between boards in multi-board sessions) -->
+<div id="bp-board-transition" class="bp-overlay" style="display:none">
+    <div class="bp-dialog bp-transition-dialog">
+        <h3>Board Complete</h3>
+        <div id="bp-transition-content"></div>
+    </div>
+</div>
+
+<!-- Session end overlay -->
+<div id="bp-session-end" class="bp-overlay" style="display:none">
+    <div class="bp-dialog bp-session-end-dialog">
+        <h3 id="bp-session-end-title">Session Complete</h3>
+        <div id="bp-session-end-content"></div>
+        <div style="display:flex;gap:10px;justify-content:center;margin-top:16px">
+            <button id="bp-session-lobby" class="bp-btn" style="background:#27ae60;color:#fff">Back to Lobby</button>
+        </div>
+    </div>
+</div>
+
+<script src="play.js"></script>
+</body>
+</html>

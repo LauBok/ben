@@ -1,0 +1,577 @@
+/* ===== Base ===== */
+*, *::after, *::before { box-sizing: border-box; }
+
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    background-color: #b0c4de;
+    color: #1a1a1a;
+}
+
+/* ===== Header ===== */
+.ba-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 24px;
+    background: #2c3e50;
+    color: #fff;
+}
+.ba-header h1 { margin: 0; font-size: 1.4rem; }
+.ba-home-link {
+    color: #ecf0f1;
+    text-decoration: none;
+    font-size: 0.95rem;
+    padding: 6px 14px;
+    border: 1px solid #ecf0f1;
+    border-radius: 4px;
+}
+.ba-home-link:hover { background: rgba(255,255,255,0.15); }
+
+/* ===== Container ===== */
+.ba-container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 16px;
+}
+
+/* ===== Setup Panel ===== */
+.ba-setup {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    padding: 14px 18px;
+    background: #fff;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+.ba-setup-group { display: flex; flex-direction: column; gap: 4px; }
+.ba-setup-group label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: #555; }
+.ba-setup-group select {
+    padding: 6px 10px;
+    font-size: 0.95rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+}
+
+/* ===== Main: Hand + Auction ===== */
+.ba-main {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+.ba-hand-panel, .ba-auction-panel {
+    flex: 1;
+    background: #fff;
+    border-radius: 6px;
+    padding: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+.ba-hand-panel h2, .ba-auction-panel h2 {
+    margin: 0 0 12px;
+    font-size: 1.1rem;
+    color: #2c3e50;
+}
+
+/* ===== Hand Display ===== */
+.ba-hand-display {
+    min-height: 80px;
+    padding: 10px;
+    background: #f0f4f0;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    font-size: 1.1rem;
+    line-height: 1.6;
+}
+.ba-hand-empty { color: #999; font-style: italic; font-size: 0.95rem; }
+.ba-hand-suit-line { white-space: nowrap; }
+.ba-hand-suit-line .ba-suit-sym { font-weight: bold; margin-right: 4px; }
+
+/* ===== Card Selector Grid ===== */
+.ba-card-selector { margin-bottom: 8px; }
+.ba-card-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-bottom: 3px;
+}
+.ba-suit-label {
+    width: 24px;
+    font-size: 1.3rem;
+    text-align: center;
+    flex-shrink: 0;
+}
+.ba-card-buttons { display: flex; gap: 2px; flex-wrap: wrap; }
+.ba-card-btn {
+    width: 32px;
+    height: 30px;
+    border: 1px solid #bbb;
+    border-radius: 3px;
+    background: #f8f8f8;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #333;
+    transition: background 0.1s, border-color 0.1s;
+    padding: 0;
+    line-height: 30px;
+    text-align: center;
+}
+.ba-card-btn:hover { border-color: #888; background: #eee; }
+.ba-card-btn.selected { color: #fff; border-color: transparent; }
+
+/* Suit-specific selected colors */
+.ba-card-row[data-suit="S"] .ba-card-btn.selected { background: #1a1a2e; }
+.ba-card-row[data-suit="H"] .ba-card-btn.selected { background: #c0392b; }
+.ba-card-row[data-suit="D"] .ba-card-btn.selected { background: #e67e22; }
+.ba-card-row[data-suit="C"] .ba-card-btn.selected { background: #27ae60; }
+
+.ba-card-count {
+    font-size: 0.85rem;
+    color: #666;
+    margin-bottom: 10px;
+}
+.ba-card-count.ba-complete { color: #27ae60; font-weight: 600; }
+.ba-card-count.ba-over { color: #c0392b; font-weight: 600; }
+
+/* Suit colors */
+.ba-spades { color: #1a1a2e; }
+.ba-hearts { color: #c0392b; }
+.ba-diamonds { color: #e67e22; }
+.ba-clubs { color: #27ae60; }
+
+/* ===== PBN Input ===== */
+.ba-pbn-input {
+    display: flex;
+    gap: 6px;
+}
+.ba-pbn-input input {
+    flex: 1;
+    padding: 6px 10px;
+    font-size: 0.9rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-family: monospace;
+}
+.ba-pbn-input button {
+    padding: 6px 14px;
+    font-size: 0.9rem;
+    border: 1px solid #2c3e50;
+    border-radius: 4px;
+    background: #2c3e50;
+    color: #fff;
+    cursor: pointer;
+}
+.ba-pbn-input button:hover { background: #34495e; }
+
+/* ===== Auction Table ===== */
+.ba-auction-table {
+    margin-bottom: 14px;
+    min-height: 60px;
+}
+.ba-auction-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+}
+.ba-auction-table th {
+    padding: 4px 8px;
+    background: #2c3e50;
+    color: #fff;
+    font-weight: 600;
+    text-align: center;
+    font-size: 0.85rem;
+}
+.ba-auction-table td {
+    padding: 5px 8px;
+    text-align: center;
+    border-bottom: 1px solid #eee;
+    font-weight: 500;
+}
+.ba-auction-table td.ba-current-turn {
+    background: #ffeaa7;
+    font-weight: 700;
+}
+.ba-bid-pass { color: #888; }
+.ba-bid-double { color: #c0392b; font-weight: 700; }
+.ba-bid-redouble { color: #2980b9; font-weight: 700; }
+
+/* ===== Bidding Box ===== */
+.ba-bidding-box {
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 10px;
+    background: #fafafa;
+}
+.ba-bb-levels, .ba-bb-suits, .ba-bb-actions {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+}
+.ba-bb-actions { margin-bottom: 0; }
+
+.ba-bb-btn {
+    padding: 6px 10px;
+    min-width: 38px;
+    border: 1px solid #bbb;
+    border-radius: 3px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: center;
+    transition: background 0.1s;
+}
+.ba-bb-btn:hover:not(.ba-bb-disabled) { background: #e8e8e8; }
+.ba-bb-btn.ba-bb-disabled {
+    opacity: 0.35;
+    cursor: default;
+    pointer-events: none;
+}
+.ba-bb-btn.ba-bb-active {
+    background: #2c3e50;
+    color: #fff;
+    border-color: #2c3e50;
+}
+.ba-bb-btn-pass { color: #888; }
+.ba-bb-btn-dbl { color: #c0392b; }
+.ba-bb-btn-rdbl { color: #2980b9; }
+.ba-bb-btn-undo { color: #7f8c8d; }
+
+/* ===== Action Bar ===== */
+.ba-action-bar {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-bottom: 16px;
+}
+.ba-btn-primary {
+    padding: 10px 28px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    background: #27ae60;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.ba-btn-primary:hover { background: #219a52; }
+.ba-btn-primary:disabled { background: #95a5a6; cursor: default; }
+.ba-btn-secondary {
+    padding: 10px 22px;
+    font-size: 1.05rem;
+    background: #fff;
+    color: #2c3e50;
+    border: 1px solid #2c3e50;
+    border-radius: 5px;
+    cursor: pointer;
+}
+.ba-btn-secondary:hover { background: #ecf0f1; }
+
+/* ===== Loader ===== */
+.ba-loader {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 16px;
+    color: #555;
+    font-size: 1rem;
+}
+.ba-spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid #ddd;
+    border-top: 3px solid #2c3e50;
+    border-radius: 50%;
+    animation: ba-spin 0.8s linear infinite;
+}
+@keyframes ba-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ===== Results ===== */
+.ba-results { margin-top: 4px; }
+.ba-result-card {
+    background: #fff;
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+.ba-result-card h3 {
+    margin: 0 0 10px;
+    font-size: 1rem;
+    color: #2c3e50;
+    border-bottom: 2px solid #ecf0f1;
+    padding-bottom: 6px;
+}
+
+/* Recommendation */
+.ba-rec-bid {
+    display: inline-block;
+    font-size: 1.6rem;
+    font-weight: 700;
+    padding: 8px 18px;
+    border-radius: 5px;
+    background: #27ae60;
+    color: #fff;
+    margin-right: 12px;
+    vertical-align: middle;
+}
+.ba-rec-bid.ba-rec-pass { background: #95a5a6; }
+.ba-rec-bid.ba-rec-double { background: #c0392b; }
+.ba-rec-bid.ba-rec-redouble { background: #2980b9; }
+.ba-rec-meta {
+    display: inline-block;
+    vertical-align: middle;
+    font-size: 0.9rem;
+    color: #666;
+}
+.ba-rec-explanation {
+    margin-top: 8px;
+    font-size: 0.95rem;
+    color: #333;
+}
+
+/* Candidates table */
+.ba-cand-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+.ba-cand-table th {
+    text-align: left;
+    padding: 6px 10px;
+    background: #f5f6fa;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    color: #555;
+    border-bottom: 2px solid #ddd;
+}
+.ba-cand-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid #eee;
+}
+.ba-cand-table tr:first-child td { font-weight: 600; }
+.ba-cand-table .ba-cand-bid { font-weight: 600; font-size: 0.95rem; }
+
+/* Inference */
+.ba-inf-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+}
+.ba-inf-player {
+    padding: 10px;
+    background: #f5f6fa;
+    border-radius: 4px;
+    text-align: center;
+}
+.ba-inf-player-label {
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    color: #555;
+    margin-bottom: 4px;
+}
+.ba-inf-hcp {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #2c3e50;
+}
+.ba-inf-hcp-label { font-size: 0.75rem; color: #888; }
+.ba-inf-shape {
+    margin-top: 6px;
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+/* Explanations */
+.ba-expl-list { list-style: none; padding: 0; margin: 0; }
+.ba-expl-list li {
+    padding: 5px 0;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 0.93rem;
+}
+.ba-expl-list li:last-child { border-bottom: none; }
+.ba-expl-seat {
+    display: inline-block;
+    width: 22px;
+    font-weight: 700;
+    color: #2c3e50;
+}
+.ba-expl-bid { font-weight: 600; }
+
+/* ===== HCP Distribution ===== */
+.ba-hcp-players { display: flex; flex-direction: column; gap: 14px; }
+.ba-hcp-player-row { }
+.ba-hcp-player-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+}
+.ba-hcp-player-name { font-weight: 600; font-size: 0.9rem; color: #2c3e50; }
+.ba-hcp-player-summary { font-size: 0.8rem; color: #666; }
+.ba-hcp-chart {
+    display: flex;
+    align-items: flex-end;
+    height: 60px;
+    gap: 1px;
+    background: #f9f9f9;
+    border-radius: 3px;
+    padding: 2px 2px 0;
+    border-bottom: 2px solid #ddd;
+}
+.ba-hcp-bar {
+    flex: 1;
+    min-width: 3px;
+    max-width: 16px;
+    border-radius: 2px 2px 0 0;
+    position: relative;
+    transition: height 0.2s;
+}
+.ba-hcp-bar:hover { opacity: 0.8; }
+.ba-hcp-bar[title] { cursor: default; }
+.ba-hcp-labels {
+    display: flex;
+    gap: 1px;
+    padding: 0 2px;
+}
+.ba-hcp-labels span {
+    flex: 1;
+    text-align: center;
+    font-size: 0.6rem;
+    color: #999;
+    min-width: 3px;
+    max-width: 16px;
+}
+.ba-hcp-color-lho { background: #e74c3c; }
+.ba-hcp-color-partner { background: #2980b9; }
+.ba-hcp-color-rho { background: #8e44ad; }
+
+/* ===== Suit Length Distribution ===== */
+.ba-dist-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+.ba-dist-table th {
+    padding: 5px 8px;
+    background: #f5f6fa;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    color: #555;
+    border-bottom: 2px solid #ddd;
+    text-align: center;
+}
+.ba-dist-table td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #eee;
+    text-align: center;
+    vertical-align: top;
+}
+.ba-dist-table td:first-child {
+    text-align: left;
+    font-weight: 600;
+    color: #2c3e50;
+    white-space: nowrap;
+}
+.ba-dist-cell-primary { font-weight: 700; font-size: 0.95rem; }
+.ba-dist-cell-detail { font-size: 0.75rem; color: #888; line-height: 1.3; margin-top: 2px; }
+.ba-dist-void { color: #c0392b; font-weight: 700; }
+.ba-dist-long { color: #2980b9; font-weight: 700; }
+
+/* ===== Partnership Analysis ===== */
+.ba-fit-section { margin-bottom: 12px; }
+.ba-fit-section:last-child { margin-bottom: 0; }
+.ba-fit-label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: #555; margin-bottom: 4px; }
+.ba-fit-hcp-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.ba-fit-hcp-value {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #2c3e50;
+}
+.ba-fit-hcp-breakdown { font-size: 0.85rem; color: #666; }
+.ba-fit-suits {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 8px;
+}
+.ba-fit-suit-card {
+    padding: 8px;
+    border-radius: 4px;
+    text-align: center;
+    background: #f5f6fa;
+}
+.ba-fit-suit-card.ba-fit-good { background: #d4efdf; border: 1px solid #27ae60; }
+.ba-fit-suit-card.ba-fit-marginal { background: #fef9e7; border: 1px solid #f1c40f; }
+.ba-fit-suit-sym { font-size: 1.1rem; font-weight: 700; }
+.ba-fit-suit-total { font-size: 1.2rem; font-weight: 700; color: #2c3e50; }
+.ba-fit-suit-detail { font-size: 0.75rem; color: #888; }
+.ba-zone-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #fff;
+    margin-right: 6px;
+}
+.ba-zone-partscore { background: #95a5a6; }
+.ba-zone-game { background: #27ae60; }
+.ba-zone-slam { background: #2980b9; }
+.ba-zone-grand { background: #8e44ad; }
+
+/* ===== Sample Hands ===== */
+.ba-samples-toggle {
+    cursor: pointer;
+    color: #2980b9;
+    font-size: 0.9rem;
+    margin-bottom: 8px;
+    user-select: none;
+}
+.ba-samples-toggle:hover { text-decoration: underline; }
+.ba-samples-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+    font-family: monospace;
+}
+.ba-samples-table th {
+    padding: 4px 6px;
+    background: #f5f6fa;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: #555;
+    border-bottom: 2px solid #ddd;
+    text-align: left;
+    font-family: Arial, sans-serif;
+}
+.ba-samples-table td {
+    padding: 3px 6px;
+    border-bottom: 1px solid #f0f0f0;
+    white-space: nowrap;
+}
+.ba-samples-table tr:hover { background: #f9f9f9; }
+.ba-sample-quality {
+    font-family: Arial, sans-serif;
+    text-align: right;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 700px) {
+    .ba-main { flex-direction: column; }
+    .ba-inf-grid { grid-template-columns: 1fr; }
+    .ba-fit-suits { grid-template-columns: 1fr 1fr; }
+}

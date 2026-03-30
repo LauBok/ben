@@ -192,9 +192,17 @@ class CardPlayer:
         for card52, (e_tricks, e_score, e_make, msg) in dd_resp.items():
             if card52 in pimc_resp:
                 pimc_e_tricks, pimc_e_score, pimc_e_make, pimc_msg = pimc_resp[card52]
-                new_e_tricks = round((pimc_e_tricks * weight + e_tricks * (1-weight)),2) if pimc_e_tricks is not None and e_tricks is not None else None
-                new_e_score = round((pimc_e_score * weight + e_score * (1-weight)),2) if pimc_e_score is not None and e_score is not None else None
-                new_e_make = round((pimc_e_make * weight + e_make * (1-weight)),2) if pimc_e_make is not None and e_make is not None else None
+                # PIMC returns -1 as sentinel for forced cards (no calculation done)
+                pimc_valid = pimc_e_tricks is not None and pimc_e_tricks >= 0
+                if pimc_valid:
+                    new_e_tricks = round((pimc_e_tricks * weight + e_tricks * (1-weight)),2) if e_tricks is not None else pimc_e_tricks
+                    new_e_score = round((pimc_e_score * weight + e_score * (1-weight)),2) if e_score is not None else pimc_e_score
+                    new_e_make = round((pimc_e_make * weight + e_make * (1-weight)),2) if e_make is not None else pimc_e_make
+                else:
+                    # Forced card — use DD values only
+                    new_e_tricks = e_tricks
+                    new_e_score = e_score
+                    new_e_make = e_make
                 new_msg = msg +"|" if msg else "" + engine + f" {weight*100:.0f}%|" + (pimc_msg or '')
                 new_msg += f"|{pimc_e_tricks:.2f} {pimc_e_score:.2f} {pimc_e_make:.2f}"
                 new_msg += f"|BEN DD {(1-weight)*100:.0f}%|"
@@ -300,7 +308,7 @@ class CardPlayer:
 
         return None, card_resp_alphamju
 
-    def play_card(self, trick_i, leader_i, current_trick52, tricks52, players_states, worlds, bidding_scores, quality, probability_of_occurence, shown_out_suits, play_status, lead_scores, play_scores, logical_play_scores, discard_scores, features):
+    def play_card(self, trick_i, leader_i, current_trick52, tricks52, players_states, worlds, bidding_scores, quality, probability_of_occurence, shown_out_suits, play_status, lead_scores, play_scores, logical_play_scores, discard_scores, features, include_all_cards=False):
         #print(f'{Fore.YELLOW}Play card for player {self.player_i}{Fore.RESET}')
         t_start = time.time()
         samples = []
@@ -349,7 +357,7 @@ class CardPlayer:
         if play_status == "discard" and not self.models.pimc_use_discard:
             dd_resp_cards, claims = self.get_cards_dd_evaluation(trick_i, leader_i, tricks52, current_trick52, players_states, probability_of_occurence, quality)
             self.update_with_alphamju(card_resp_alphamju, merged_card_resp)
-            card_resp = self.pick_card_after_dd_eval(trick_i, leader_i, current_trick52, tricks52, players_states, dd_resp_cards, bidding_scores, quality, samples, play_status, self.missing_cards, claims, shown_out_suits, card_scores_nn)
+            card_resp = self.pick_card_after_dd_eval(trick_i, leader_i, current_trick52, tricks52, players_states, dd_resp_cards, bidding_scores, quality, samples, play_status, self.missing_cards, claims, shown_out_suits, card_scores_nn, include_all_cards)
         else:                    
             if self.pimc_declaring and (self.player_i == 1 or self.player_i == 3):
                 with ModelTimer.time_call('pimc_declaring'):
@@ -371,7 +379,7 @@ class CardPlayer:
                 else:
                     merged_card_resp = pimc_resp_cards
                 self.update_with_alphamju(card_resp_alphamju, merged_card_resp)
-                card_resp = self.pick_card_after_pimc_eval(trick_i, leader_i, current_trick52, tricks52, players_states, merged_card_resp, bidding_scores, quality, samples, play_status, self.missing_cards, claims, shown_out_suits, card_scores_nn)            
+                card_resp = self.pick_card_after_pimc_eval(trick_i, leader_i, current_trick52, tricks52, players_states, merged_card_resp, bidding_scores, quality, samples, play_status, self.missing_cards, claims, shown_out_suits, card_scores_nn, include_all_cards)            
             else:
                 if self.pimc_defending and (self.player_i == 0 or self.player_i == 2):
                     with ModelTimer.time_call('pimc_defending'):
@@ -390,12 +398,12 @@ class CardPlayer:
                     else:
                         merged_card_resp = pimc_resp_cards
                     self.update_with_alphamju(card_resp_alphamju, merged_card_resp)
-                    card_resp = self.pick_card_after_pimc_eval(trick_i, leader_i, current_trick52, tricks52, players_states, merged_card_resp, bidding_scores, quality, samples, play_status, self.missing_cards, claims, shown_out_suits, card_scores_nn)            
+                    card_resp = self.pick_card_after_pimc_eval(trick_i, leader_i, current_trick52, tricks52, players_states, merged_card_resp, bidding_scores, quality, samples, play_status, self.missing_cards, claims, shown_out_suits, card_scores_nn, include_all_cards)            
                     
                 else:
                     dd_resp_cards, claims = self.get_cards_dd_evaluation(trick_i, leader_i, tricks52, current_trick52, players_states, probability_of_occurence, quality)
                     self.update_with_alphamju(card_resp_alphamju, dd_resp_cards)
-                    card_resp = self.pick_card_after_dd_eval(trick_i, leader_i, current_trick52, tricks52, players_states, dd_resp_cards, bidding_scores, quality, samples, play_status, self.missing_cards, claims, shown_out_suits, card_scores_nn)
+                    card_resp = self.pick_card_after_dd_eval(trick_i, leader_i, current_trick52, tricks52, players_states, dd_resp_cards, bidding_scores, quality, samples, play_status, self.missing_cards, claims, shown_out_suits, card_scores_nn, include_all_cards)
 
         if self.verbose:
             print(f'Play card response time: {time.time() - t_start:0.4f}')
@@ -808,7 +816,7 @@ class CardPlayer:
             print("Trump adjust", trump_adjust)
         return trump_adjust
 
-    def pick_card_after_pimc_eval(self, trick_i, leader_i, current_trick, tricks52,  players_states, card_dd, bidding_scores, quality, samples, play_status, missing_cards, claim, shown_out_suits, card_scores_nn):
+    def pick_card_after_pimc_eval(self, trick_i, leader_i, current_trick, tricks52,  players_states, card_dd, bidding_scores, quality, samples, play_status, missing_cards, claim, shown_out_suits, card_scores_nn, include_all_cards=False):
         bad_play = []
         claim_cards, claim_tricks = claim
         if claim_cards :
@@ -859,8 +867,8 @@ class CardPlayer:
             card32 = deck52.card52to32(card52)
             insta_score = self.get_nn_score(card32, card52, card_nn, play_status, tricks52)
             if len(claim_cards) == 0:
-                # Ignore cards not suggested by the NN
-                if insta_score < self.models.pimc_trust_NN:
+                # Ignore cards not suggested by the NN (unless including all for analysis)
+                if not include_all_cards and insta_score < self.models.pimc_trust_NN:
                     continue
                 if insta_score > self.models.play_reward_threshold_NN and self.models.play_reward_threshold_NN > 0:
                     if self.models.matchpoint:
@@ -875,7 +883,7 @@ class CardPlayer:
                     # if card32 // 8 != self.strain_i - 1:
                     adjust_card = 0
                 if card52 in bad_play:
-                    adjust_card += -0.2            
+                    adjust_card += -0.2
 
             card = self.create_card(suit_adjust, card52, e_tricks, e_score, e_make, msg, adjust_card, insta_score)
 
@@ -952,7 +960,7 @@ class CardPlayer:
 
         return card_nn.get(card32, 0)
 
-    def pick_card_after_dd_eval(self, trick_i, leader_i, current_trick, tricks52, players_states, card_dd, bidding_scores, quality, samples, play_status, missing_cards, claim, shown_out_suits, card_scores_nn):
+    def pick_card_after_dd_eval(self, trick_i, leader_i, current_trick, tricks52, players_states, card_dd, bidding_scores, quality, samples, play_status, missing_cards, claim, shown_out_suits, card_scores_nn, include_all_cards=False):
         bad_play = []
         # print(f"Claim cards before check: {claim}")
         claim_cards, claim_tricks = claim
@@ -1005,8 +1013,8 @@ class CardPlayer:
             card32 = deck52.card52to32(card52)
             insta_score = self.get_nn_score(card32, card52, card_nn, play_status, tricks52)
             if len(claim_cards) == 0:
-            # Ignore cards not suggested by the NN
-                if insta_score < self.models.pimc_trust_NN:
+            # Ignore cards not suggested by the NN (unless including all for analysis)
+                if not include_all_cards and insta_score < self.models.pimc_trust_NN:
                     continue
                 if insta_score > self.models.play_reward_threshold_NN and self.models.play_reward_threshold_NN > 0:
                     if self.models.matchpoint:
@@ -1098,19 +1106,23 @@ class CardPlayer:
         return best_card_resp
 
     def create_card(self, suit_adjust, card52, e_tricks, e_score, e_make, msg, adjust_card, insta_score):
+        # PIMC returns -1 as sentinel for forced cards (no calculation)
+        safe_e_tricks = e_tricks if e_tricks is not None and e_tricks >= 0 else 0
+        safe_e_score = e_score if e_score is not None and e_score >= 0 else 0
+        safe_e_make = e_make if e_make is not None and e_make >= 0 else 0
         card = CandidateCard(
                     card=Card.from_code(card52),
                     insta_score=insta_score,
-                    expected_tricks_dd=round(e_tricks + adjust_card,3),
-                    p_make_contract=e_make,
+                    expected_tricks_dd=round(safe_e_tricks + adjust_card,3),
+                    p_make_contract=safe_e_make,
                     **({
-                        "expected_score_mp": round(e_score + 20 * suit_adjust[card52 // 13],0)
+                        "expected_score_mp": round(safe_e_score + 20 * suit_adjust[card52 // 13],0)
                     } if self.models.matchpoint and self.models.use_real_imp_or_mp else
                     {
-                        "expected_score_imp": round(e_score + adjust_card,2)
+                        "expected_score_imp": round(safe_e_score + adjust_card,2)
                     } if not self.models.matchpoint and self.models.use_real_imp_or_mp else
                     {
-                        "expected_score_dd": e_score + adjust_card
+                        "expected_score_dd": safe_e_score + adjust_card
                     }),
                     msg= (f"{msg}|adjust={adjust_card}" if adjust_card != 0 else msg)
                 )
